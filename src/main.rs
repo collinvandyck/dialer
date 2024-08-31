@@ -27,6 +27,11 @@ async fn main() -> eyre::Result<()> {
     Ok(())
 }
 
+mod embedded {
+    use refinery::embed_migrations;
+    embed_migrations!("./migrations");
+}
+
 #[derive(Debug, Hash, PartialEq, Eq)]
 enum Check {
     Ping {
@@ -98,7 +103,17 @@ struct HttpConfig {
 
 #[cfg(test)]
 mod tests {
+    use rusqlite::Connection;
+
     use super::*;
+
+    #[test]
+    fn migrations() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        super::embedded::migrations::runner()
+            .run(&mut conn)
+            .unwrap();
+    }
 
     #[test]
     fn config_serde() {
