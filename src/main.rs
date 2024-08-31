@@ -3,9 +3,13 @@
 use color_eyre::eyre::{self, Context, Error};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
+use tracing::info;
+use tracing_subscriber::fmt::init;
 
-fn main() {
-    println!("Hello, world!");
+#[tokio::main]
+async fn main() {
+    tracing_subscriber::fmt().init();
+    info!("Hello World.");
 }
 
 #[derive(Debug, Hash, PartialEq, Eq)]
