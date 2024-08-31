@@ -1,0 +1,5 @@
+[ping]
+google = { host = "google.com" }
+
+[http]
+google = { host = "google.com" }
