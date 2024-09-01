@@ -1,6 +1,7 @@
 use clap::Parser;
 use color_eyre::eyre::{self, Context};
 use r2d2_sqlite::SqliteConnectionManager;
+use reqwest::Method;
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -33,11 +34,13 @@ async fn main() -> eyre::Result<()> {
     for check in checks.clone() {
         let checker = Checker::new(&config, &db, &check);
         tasks.spawn(async move {
-            checker
+            let res = checker
                 .run()
                 .await
                 .wrap_err(format!("{check} failed"))
-                .map_or_else(|e| e, |_| eyre::eyre!("{check} quit unexpectedly"))
+                .map_or_else(|e| e, |_| eyre::eyre!("{check} quit unexpectedly"));
+            tracing::warn!("WELP");
+            res
         });
     }
     while let Some(res) = tasks.join_next().await {
@@ -75,11 +78,28 @@ impl Checker {
     }
 
     async fn check_ping(&self, _ping: &Ping) -> eyre::Result<()> {
-        todo!()
+        Ok(())
     }
 
-    async fn check_http(&self, _http: &Http) -> eyre::Result<()> {
-        todo!()
+    async fn check_http(&self, http: &Http) -> eyre::Result<()> {
+        let client = reqwest::Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
+            .build()
+            .wrap_err("build client")?;
+        let req = client
+            .request(Method::GET, &http.url)
+            .timeout(Duration::from_secs(1))
+            .build()
+            .wrap_err("build new request")?;
+        match client.execute(req).await.wrap_err("execute request") {
+            Ok(resp) => {
+                tracing::info!("{} -> {}", self.check, resp.status());
+            }
+            Err(err) => {
+                tracing::error!("{} 💥 {err:?}", self.check);
+            }
+        }
+        Ok(())
     }
 }
 
@@ -129,8 +149,7 @@ struct Ping {
 #[derive(Clone, Debug, Hash, PartialEq, Eq)]
 struct Http {
     name: String,
-    host: String,
-    port: Option<u32>,
+    url: String,
     code: Option<u32>,
 }
 
@@ -178,8 +197,7 @@ impl Config {
             .chain(self.http.clone().into_iter().map(|(name, cfg)| {
                 Check::Http(Http {
                     name,
-                    host: cfg.host,
-                    port: cfg.port,
+                    url: cfg.url,
                     code: cfg.code,
                 })
             }))
@@ -194,8 +212,7 @@ struct PingConfig {
 
 #[derive(Clone, Serialize, Deserialize)]
 struct HttpConfig {
-    host: String,
-    port: Option<u32>,
+    url: String,
     code: Option<u32>,
 }
 
@@ -228,8 +245,7 @@ mod tests {
                 }),
                 Check::Http(Http {
                     name: String::from("google"),
-                    host: String::from("google.com"),
-                    port: None,
+                    url: String::from("https://google.com"),
                     code: None,
                 })
             ])
