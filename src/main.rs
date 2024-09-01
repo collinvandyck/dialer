@@ -1,6 +1,5 @@
 use clap::Parser;
 use color_eyre::eyre::{self, Context};
-use eyre::eyre;
 use r2d2_sqlite::SqliteConnectionManager;
 use reqwest::Method;
 use rusqlite::Connection;
@@ -49,7 +48,7 @@ async fn main() -> eyre::Result<()> {
             checker
                 .run()
                 .await
-                .map_err(|err| eyre!("check failed: {err}"))
+                .wrap_err("check failed")
                 .map_or_else(|e| e, |_| eyre::eyre!("{check} quit unexpectedly"))
         });
     }
@@ -102,17 +101,13 @@ impl Checker {
             .request(Method::GET, &http.url)
             .timeout(Duration::from_secs(1))
             .build()
-            .map_err(|err| eyre!("build new request: {err}"))?;
-        match client
-            .execute(req)
-            .await
-            .map_err(|err| eyre!("execute: {err:?}"))
-        {
+            .wrap_err("new request")?;
+        match client.execute(req).await.wrap_err("execute") {
             Ok(resp) => {
                 tracing::info!("{} -> {}", self.check, resp.status());
             }
             Err(err) => {
-                tracing::error!("{} 💥 {err}", self.check);
+                tracing::error!("{} 💥 {err:#}", self.check);
             }
         }
         Ok(())
