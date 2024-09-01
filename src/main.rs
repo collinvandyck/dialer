@@ -66,9 +66,12 @@ impl Checker {
             check: check.clone(),
         }
     }
+
     async fn run(&self) -> eyre::Result<()> {
-        info!("Running check {:?}", self.check);
-        Ok(())
+        loop {
+            info!("Running check {}", self.check);
+            tokio::time::sleep(self.cfg.interval).await;
+        }
     }
 }
 
@@ -105,23 +108,29 @@ mod db {
 
 #[derive(Clone, Debug, Hash, PartialEq, Eq)]
 enum Check {
-    Ping {
-        name: String,
-        host: String,
-    },
-    Http {
-        name: String,
-        host: String,
-        port: Option<u32>,
-        code: Option<u32>,
-    },
+    Ping(Ping),
+    Http(Http),
+}
+
+#[derive(Clone, Debug, Hash, PartialEq, Eq)]
+struct Ping {
+    name: String,
+    host: String,
+}
+
+#[derive(Clone, Debug, Hash, PartialEq, Eq)]
+struct Http {
+    name: String,
+    host: String,
+    port: Option<u32>,
+    code: Option<u32>,
 }
 
 impl Display for Check {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Check::Ping { name, .. } => write!(f, "{name} (ping)"),
-            Check::Http { name, .. } => write!(f, "{name} (http)"),
+            Check::Ping(Ping { name, .. }) => write!(f, "{name} (ping)"),
+            Check::Http(Http { name, .. }) => write!(f, "{name} (http)"),
         }
     }
 }
@@ -152,21 +161,20 @@ impl Config {
         self.ping
             .clone()
             .into_iter()
-            .map(|(name, cfg)| Check::Ping {
-                name,
-                host: cfg.host,
+            .map(|(name, cfg)| {
+                Check::Ping(Ping {
+                    name,
+                    host: cfg.host,
+                })
             })
-            .chain(
-                self.http
-                    .clone()
-                    .into_iter()
-                    .map(|(name, cfg)| Check::Http {
-                        name,
-                        host: cfg.host,
-                        port: cfg.port,
-                        code: cfg.code,
-                    }),
-            )
+            .chain(self.http.clone().into_iter().map(|(name, cfg)| {
+                Check::Http(Http {
+                    name,
+                    host: cfg.host,
+                    port: cfg.port,
+                    code: cfg.code,
+                })
+            }))
             .collect()
     }
 }
@@ -185,9 +193,8 @@ struct HttpConfig {
 
 #[cfg(test)]
 mod tests {
-    use rusqlite::Connection;
-
     use super::*;
+    use rusqlite::Connection;
 
     #[test]
     fn migrations() {
@@ -198,25 +205,25 @@ mod tests {
     #[test]
     fn config_serde() {
         let config = Config::from_str(include_str!("../checks.toml")).unwrap();
-        assert_eq!(config.interval, Duration::from_secs(10));
+        assert_eq!(config.interval, Duration::from_secs(1));
         let checks = config.checks();
         assert_eq!(
             checks,
             HashSet::from([
-                Check::Ping {
+                Check::Ping(Ping {
                     name: String::from("google"),
                     host: String::from("google.com")
-                },
-                Check::Ping {
+                }),
+                Check::Ping(Ping {
                     name: String::from("yahoo"),
                     host: String::from("yahoo.com")
-                },
-                Check::Http {
+                }),
+                Check::Http(Http {
                     name: String::from("google"),
                     host: String::from("google.com"),
                     port: None,
                     code: None,
-                },
+                })
             ])
         );
     }
