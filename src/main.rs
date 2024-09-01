@@ -1,12 +1,16 @@
 #![allow(unused)]
 
 use clap::Parser;
-use color_eyre::eyre::{self, Context, Error};
+use color_eyre::eyre::{self, Context, ContextCompat, Error};
+use r2d2_sqlite::SqliteConnectionManager;
+use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{HashMap, HashSet},
     path::{Path, PathBuf},
+    sync::Arc,
 };
+use tokio::task::JoinSet;
 use tracing::info;
 use tracing_subscriber::fmt::init;
 
@@ -27,32 +31,52 @@ async fn main() -> eyre::Result<()> {
     let config = Config::from_path(&args.config).await?;
     let checks = config.checks();
     info!(config = %args.config.display(), "Loaded {} checks.", checks.len());
-    let db = Db::new(&args.db);
+    let db = Db::connect(&args.db)?;
+    let mut tasks = JoinSet::new();
+    for check in checks {
+        let db = db.clone();
+        tasks.spawn(run_check(check, db));
+    }
+    while let Some(res) = tasks.join_next().await {
+        res.wrap_err("join failure")?.wrap_err("check failure")?;
+    }
     Ok(())
 }
 
+async fn run_check(check: Check, db: Db) -> eyre::Result<()> {
+    info!("Running check {check:?}");
+    Ok(())
+}
+
+type DbPool = r2d2::Pool<SqliteConnectionManager>;
+
+#[derive(Clone)]
 struct Db {
-    path: PathBuf,
+    pool: Arc<DbPool>,
 }
 
 impl Db {
-    fn new(path: &Path) -> Self {
-        Self {
-            path: path.to_path_buf(),
-        }
+    fn connect(path: &Path) -> eyre::Result<Self> {
+        Self::migrate(path).wrap_err("migrate db")?;
+        let mgr = SqliteConnectionManager::file(path);
+        let mut pool = r2d2::Pool::new(mgr).wrap_err("create db pool")?;
+        let mut conn = pool.get().wrap_err("get conn for migration")?;
+        Ok(Self {
+            pool: Arc::new(pool),
+        })
+    }
+
+    fn migrate(path: &Path) -> eyre::Result<()> {
+        let mut conn = Connection::open(path).wrap_err("open conn")?;
+        db::migrations::runner()
+            .run(&mut conn)
+            .wrap_err("migrate db")?;
+        Ok(())
     }
 }
 
 mod db {
-    use color_eyre::eyre::{self, Context};
-    use refinery::embed_migrations;
-    use rusqlite::Connection;
-    use std::path::Path;
-    embed_migrations!("./migrations");
-
-    fn connect(p: &Path) -> eyre::Result<Connection> {
-        Connection::open(p).wrap_err_with(|| format!("open db {}", p.display()))
-    }
+    refinery::embed_migrations!("./migrations");
 }
 
 #[derive(Debug, Hash, PartialEq, Eq)]
