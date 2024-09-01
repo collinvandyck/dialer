@@ -8,6 +8,7 @@ use std::{
     fmt::Display,
     path::{Path, PathBuf},
     sync::Arc,
+    time::Duration,
 };
 use tracing::{error, info};
 
@@ -32,10 +33,11 @@ async fn main() -> eyre::Result<()> {
     let (tx, mut rx) = tokio::sync::mpsc::channel(checks.len());
     for check in checks {
         let tx = tx.clone();
-        let db = db.clone();
+        let checker = Checker::new(&config, &db, &check);
         tokio::spawn(async move {
             tx.send(
-                run_check(&check, db)
+                checker
+                    .run()
                     .await
                     .wrap_err(format!("{check} failed"))
                     .map_or_else(|e| e, |_| eyre::eyre!("{check} quit unexpectedly")),
@@ -49,9 +51,25 @@ async fn main() -> eyre::Result<()> {
     Err(rx.recv().await.wrap_err("all report tx dropped")?)
 }
 
-async fn run_check(check: &Check, _db: Db) -> eyre::Result<()> {
-    info!("Running check {check:?}");
-    Ok(())
+#[allow(unused)]
+struct Checker {
+    cfg: Config,
+    db: Db,
+    check: Check,
+}
+
+impl Checker {
+    fn new(cfg: &Config, db: &Db, check: &Check) -> Self {
+        Self {
+            cfg: cfg.clone(),
+            db: db.clone(),
+            check: check.clone(),
+        }
+    }
+    async fn run(&self) -> eyre::Result<()> {
+        info!("Running check {:?}", self.check);
+        Ok(())
+    }
 }
 
 type DbPool = r2d2::Pool<SqliteConnectionManager>;
@@ -85,7 +103,7 @@ mod db {
     refinery::embed_migrations!("./migrations");
 }
 
-#[derive(Debug, Hash, PartialEq, Eq)]
+#[derive(Clone, Debug, Hash, PartialEq, Eq)]
 enum Check {
     Ping {
         name: String,
@@ -108,9 +126,11 @@ impl Display for Check {
     }
 }
 
-#[derive(Serialize, Deserialize, Default)]
+#[derive(Clone, Serialize, Deserialize, Default)]
 #[serde(default)]
 struct Config {
+    #[serde(with = "humantime_serde")]
+    interval: Duration,
     ping: HashMap<String, PingConfig>,
     http: HashMap<String, HttpConfig>,
 }
@@ -177,9 +197,9 @@ mod tests {
 
     #[test]
     fn config_serde() {
-        let checks = Config::from_str(include_str!("../checks.toml"))
-            .unwrap()
-            .checks();
+        let config = Config::from_str(include_str!("../checks.toml")).unwrap();
+        assert_eq!(config.interval, Duration::from_secs(10));
+        let checks = config.checks();
         assert_eq!(
             checks,
             HashSet::from([
@@ -187,12 +207,16 @@ mod tests {
                     name: String::from("google"),
                     host: String::from("google.com")
                 },
+                Check::Ping {
+                    name: String::from("yahoo"),
+                    host: String::from("yahoo.com")
+                },
                 Check::Http {
                     name: String::from("google"),
                     host: String::from("google.com"),
                     port: None,
                     code: None,
-                }
+                },
             ])
         );
     }

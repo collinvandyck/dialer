@@ -1,5 +1,8 @@
+interval = "10s"
+
 [ping]
 google = { host = "google.com" }
+yahoo = { host = "yahoo.com" }
 
 [http]
 google = { host = "google.com" }
