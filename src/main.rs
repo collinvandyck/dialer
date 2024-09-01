@@ -1,7 +1,5 @@
-#![allow(unused)]
-
 use clap::Parser;
-use color_eyre::eyre::{self, bail, Context, ContextCompat, Error};
+use color_eyre::eyre::{self, Context, ContextCompat};
 use r2d2_sqlite::SqliteConnectionManager;
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
@@ -11,9 +9,7 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
-use tokio::task::JoinSet;
-use tracing::info;
-use tracing_subscriber::fmt::init;
+use tracing::{error, info};
 
 #[derive(clap::Parser)]
 struct Args {
@@ -38,21 +34,22 @@ async fn main() -> eyre::Result<()> {
         let tx = tx.clone();
         let db = db.clone();
         tokio::spawn(async move {
-            let _ = tx
-                .send(
-                    run_check(&check, db)
-                        .await
-                        .wrap_err(format!("{check} failed"))
-                        .map_or_else(|e| e, |_| eyre::eyre!("{check} quit unexpectedly")),
-                )
-                .await;
+            tx.send(
+                run_check(&check, db)
+                    .await
+                    .wrap_err(format!("{check} failed"))
+                    .map_or_else(|e| e, |_| eyre::eyre!("{check} quit unexpectedly")),
+            )
+            .await
+            .inspect_err(|err| {
+                error!("could not send report on tx: {err}");
+            })
         });
     }
-    let err = rx.recv().await.wrap_err("all report tx dropped")?;
-    Err(err)
+    Err(rx.recv().await.wrap_err("all report tx dropped")?)
 }
 
-async fn run_check(check: &Check, db: Db) -> eyre::Result<()> {
+async fn run_check(check: &Check, _db: Db) -> eyre::Result<()> {
     info!("Running check {check:?}");
     Ok(())
 }
@@ -60,6 +57,7 @@ async fn run_check(check: &Check, db: Db) -> eyre::Result<()> {
 type DbPool = r2d2::Pool<SqliteConnectionManager>;
 
 #[derive(Clone)]
+#[allow(unused)]
 struct Db {
     pool: Arc<DbPool>,
 }
@@ -68,8 +66,7 @@ impl Db {
     fn connect(path: &Path) -> eyre::Result<Self> {
         Self::migrate(path).wrap_err("migrate db")?;
         let mgr = SqliteConnectionManager::file(path);
-        let mut pool = r2d2::Pool::new(mgr).wrap_err("create db pool")?;
-        let mut conn = pool.get().wrap_err("get conn for migration")?;
+        let pool = r2d2::Pool::new(mgr).wrap_err("create db pool")?;
         Ok(Self {
             pool: Arc::new(pool),
         })
