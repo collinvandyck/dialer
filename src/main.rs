@@ -1,12 +1,13 @@
 #![allow(unused)]
 
 use clap::Parser;
-use color_eyre::eyre::{self, Context, ContextCompat, Error};
+use color_eyre::eyre::{self, bail, Context, ContextCompat, Error};
 use r2d2_sqlite::SqliteConnectionManager;
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{HashMap, HashSet},
+    fmt::Display,
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -32,18 +33,26 @@ async fn main() -> eyre::Result<()> {
     let checks = config.checks();
     info!(config = %args.config.display(), "Loaded {} checks.", checks.len());
     let db = Db::connect(&args.db)?;
-    let mut tasks = JoinSet::new();
+    let (tx, mut rx) = tokio::sync::mpsc::channel(checks.len());
     for check in checks {
+        let tx = tx.clone();
         let db = db.clone();
-        tasks.spawn(run_check(check, db));
+        tokio::spawn(async move {
+            let _ = tx
+                .send(
+                    run_check(&check, db)
+                        .await
+                        .wrap_err(format!("{check} failed"))
+                        .map_or_else(|e| e, |_| eyre::eyre!("{check} quit unexpectedly")),
+                )
+                .await;
+        });
     }
-    while let Some(res) = tasks.join_next().await {
-        res.wrap_err("join failure")?.wrap_err("check failure")?;
-    }
-    Ok(())
+    let err = rx.recv().await.wrap_err("all report tx dropped")?;
+    Err(err)
 }
 
-async fn run_check(check: Check, db: Db) -> eyre::Result<()> {
+async fn run_check(check: &Check, db: Db) -> eyre::Result<()> {
     info!("Running check {check:?}");
     Ok(())
 }
@@ -91,6 +100,15 @@ enum Check {
         port: Option<u32>,
         code: Option<u32>,
     },
+}
+
+impl Display for Check {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Check::Ping { name, .. } => write!(f, "{name} (ping)"),
+            Check::Http { name, .. } => write!(f, "{name} (http)"),
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize, Default)]
