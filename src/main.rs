@@ -1,5 +1,5 @@
 use clap::Parser;
-use color_eyre::eyre::{self, Context, ContextCompat};
+use color_eyre::eyre::{self, Context};
 use r2d2_sqlite::SqliteConnectionManager;
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
@@ -10,7 +10,6 @@ use std::{
     sync::Arc,
     time::Duration,
 };
-use tracing::{error, info};
 
 #[derive(clap::Parser)]
 struct Args {
@@ -28,27 +27,24 @@ async fn main() -> eyre::Result<()> {
     let args = Args::parse();
     let config = Config::from_path(&args.config).await?;
     let checks = config.checks();
-    info!(config = %args.config.display(), "Loaded {} checks.", checks.len());
+    tracing::info!(config = %args.config.display(), "Loaded {} checks.", checks.len());
     let db = Db::connect(&args.db)?;
-    let (tx, mut rx) = tokio::sync::mpsc::channel(checks.len());
-    for check in checks {
-        let tx = tx.clone();
+    let mut tasks = tokio::task::JoinSet::new();
+    for check in checks.clone() {
         let checker = Checker::new(&config, &db, &check);
-        tokio::spawn(async move {
-            tx.send(
-                checker
-                    .run()
-                    .await
-                    .wrap_err(format!("{check} failed"))
-                    .map_or_else(|e| e, |_| eyre::eyre!("{check} quit unexpectedly")),
-            )
-            .await
-            .inspect_err(|err| {
-                error!("could not send report on tx: {err}");
-            })
+        tasks.spawn(async move {
+            checker
+                .run()
+                .await
+                .wrap_err(format!("{check} failed"))
+                .map_or_else(|e| e, |_| eyre::eyre!("{check} quit unexpectedly"))
         });
     }
-    Err(rx.recv().await.wrap_err("all report tx dropped")?)
+    while let Some(res) = tasks.join_next().await {
+        let err = res.wrap_err("check panicked")?;
+        eyre::bail!(err);
+    }
+    Ok(())
 }
 
 #[allow(unused)]
@@ -69,9 +65,21 @@ impl Checker {
 
     async fn run(&self) -> eyre::Result<()> {
         loop {
-            info!("Running check {}", self.check);
+            match &self.check {
+                Check::Ping(ping) => self.check_ping(ping).await?,
+                Check::Http(http) => self.check_http(http).await?,
+            }
+            tracing::info!("Running check {}", self.check);
             tokio::time::sleep(self.cfg.interval).await;
         }
+    }
+
+    async fn check_ping(&self, _ping: &Ping) -> eyre::Result<()> {
+        todo!()
+    }
+
+    async fn check_http(&self, _http: &Http) -> eyre::Result<()> {
+        todo!()
     }
 }
 
