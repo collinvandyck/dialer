@@ -14,6 +14,9 @@ use tracing_subscriber::fmt::init;
 struct Args {
     #[arg(long, default_value = "checks.toml")]
     config: PathBuf,
+
+    #[arg(long, default_value = "checks.db")]
+    db: PathBuf,
 }
 
 #[tokio::main]
@@ -24,12 +27,32 @@ async fn main() -> eyre::Result<()> {
     let config = Config::from_path(&args.config).await?;
     let checks = config.checks();
     info!(config = %args.config.display(), "Loaded {} checks.", checks.len());
+    let db = Db::new(&args.db);
     Ok(())
 }
 
-mod embedded {
+struct Db {
+    path: PathBuf,
+}
+
+impl Db {
+    fn new(path: &Path) -> Self {
+        Self {
+            path: path.to_path_buf(),
+        }
+    }
+}
+
+mod db {
+    use color_eyre::eyre::{self, Context};
     use refinery::embed_migrations;
+    use rusqlite::Connection;
+    use std::path::Path;
     embed_migrations!("./migrations");
+
+    fn connect(p: &Path) -> eyre::Result<Connection> {
+        Connection::open(p).wrap_err_with(|| format!("open db {}", p.display()))
+    }
 }
 
 #[derive(Debug, Hash, PartialEq, Eq)]
@@ -110,9 +133,7 @@ mod tests {
     #[test]
     fn migrations() {
         let mut conn = Connection::open_in_memory().unwrap();
-        super::embedded::migrations::runner()
-            .run(&mut conn)
-            .unwrap();
+        super::db::migrations::runner().run(&mut conn).unwrap();
     }
 
     #[test]
