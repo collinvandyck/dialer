@@ -10,6 +10,7 @@ humantime-serde = "1.1.1"
 r2d2 = "0.8.10"
 r2d2_sqlite = "0.24.0"
 refinery = { version = "0.8.14", features = ["rusqlite"] }
+reqwest = "0.12.7"
 rusqlite = { version = "0.31", features = ["bundled"] }
 serde = { version = "1.0.209", features = ["derive"] }
 thiserror = "1.0.63"
