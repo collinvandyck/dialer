@@ -6,6 +6,7 @@ edition = "2021"
 [dependencies]
 clap = { version = "4.5.16", features = ["derive"] }
 color-eyre = "0.6.3"
+eyre = "0.6.12"
 humantime-serde = "1.1.1"
 r2d2 = "0.8.10"
 r2d2_sqlite = "0.24.0"
@@ -17,4 +18,5 @@ thiserror = "1.0.63"
 tokio = { version = "1.40.0", features = ["full"] }
 toml = "0.8.19"
 tracing = "0.1.40"
+tracing-error = "0.2.0"
 tracing-subscriber = { version = "0.3.18", features = ["env-filter"] }

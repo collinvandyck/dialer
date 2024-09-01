@@ -1,5 +1,6 @@
 use clap::Parser;
 use color_eyre::eyre::{self, Context};
+use eyre::eyre;
 use r2d2_sqlite::SqliteConnectionManager;
 use reqwest::Method;
 use rusqlite::Connection;
@@ -11,6 +12,7 @@ use std::{
     sync::Arc,
     time::Duration,
 };
+use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
 #[derive(clap::Parser)]
 struct Args {
@@ -24,7 +26,17 @@ struct Args {
 #[tokio::main]
 async fn main() -> eyre::Result<()> {
     color_eyre::install()?;
-    tracing_subscriber::fmt().init();
+
+    let fmt_layer = tracing_subscriber::fmt::layer().with_target(false);
+    let filter_layer = tracing_subscriber::EnvFilter::try_from_default_env()
+        .or_else(|_| EnvFilter::try_new("info"))
+        .unwrap();
+    tracing_subscriber::registry()
+        .with(filter_layer)
+        .with(fmt_layer)
+        .with(tracing_error::ErrorLayer::default())
+        .init();
+
     let args = Args::parse();
     let config = Config::from_path(&args.config).await?;
     let checks = config.checks();
@@ -34,13 +46,11 @@ async fn main() -> eyre::Result<()> {
     for check in checks.clone() {
         let checker = Checker::new(&config, &db, &check);
         tasks.spawn(async move {
-            let res = checker
+            checker
                 .run()
                 .await
-                .wrap_err(format!("{check} failed"))
-                .map_or_else(|e| e, |_| eyre::eyre!("{check} quit unexpectedly"));
-            tracing::warn!("WELP");
-            res
+                .map_err(|err| eyre!("check failed: {err}"))
+                .map_or_else(|e| e, |_| eyre::eyre!("{check} quit unexpectedly"))
         });
     }
     while let Some(res) = tasks.join_next().await {
@@ -51,6 +61,7 @@ async fn main() -> eyre::Result<()> {
 }
 
 #[allow(unused)]
+#[derive(Debug)]
 struct Checker {
     cfg: Config,
     db: Db,
@@ -81,6 +92,7 @@ impl Checker {
         Ok(())
     }
 
+    #[tracing::instrument(skip_all)]
     async fn check_http(&self, http: &Http) -> eyre::Result<()> {
         let client = reqwest::Client::builder()
             .redirect(reqwest::redirect::Policy::none())
@@ -90,13 +102,17 @@ impl Checker {
             .request(Method::GET, &http.url)
             .timeout(Duration::from_secs(1))
             .build()
-            .wrap_err("build new request")?;
-        match client.execute(req).await.wrap_err("execute request") {
+            .map_err(|err| eyre!("build new request: {err}"))?;
+        match client
+            .execute(req)
+            .await
+            .map_err(|err| eyre!("execute: {err:?}"))
+        {
             Ok(resp) => {
                 tracing::info!("{} -> {}", self.check, resp.status());
             }
             Err(err) => {
-                tracing::error!("{} 💥 {err:?}", self.check);
+                tracing::error!("{} 💥 {err}", self.check);
             }
         }
         Ok(())
@@ -105,7 +121,7 @@ impl Checker {
 
 type DbPool = r2d2::Pool<SqliteConnectionManager>;
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 #[allow(unused)]
 struct Db {
     pool: Arc<DbPool>,
@@ -162,7 +178,7 @@ impl Display for Check {
     }
 }
 
-#[derive(Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(default)]
 struct Config {
     #[serde(with = "humantime_serde")]
@@ -205,12 +221,12 @@ impl Config {
     }
 }
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct PingConfig {
     host: String,
 }
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct HttpConfig {
     url: String,
     code: Option<u32>,
@@ -224,7 +240,7 @@ mod tests {
     #[test]
     fn migrations() {
         let mut conn = Connection::open_in_memory().unwrap();
-        super::db::migrations::runner().run(&mut conn).unwrap();
+        db::migrations::runner().run(&mut conn).unwrap();
     }
 
     #[test]
