@@ -6,4 +6,3 @@ yahoo = { host = "yahoo.com" }
 
 [http]
 google = { url = "https://google.com" }
-5xx = { url = "https://5xx.engineer" }

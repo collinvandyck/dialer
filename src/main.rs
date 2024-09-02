@@ -1,16 +1,23 @@
+#![allow(unused)]
+
+use chrono::{DateTime, NaiveDateTime};
 use clap::Parser;
 use color_eyre::eyre::{self, Context};
+use r2d2::PooledConnection;
 use r2d2_sqlite::SqliteConnectionManager;
 use reqwest::Method;
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 use std::{
+    borrow::Borrow,
     collections::{HashMap, HashSet},
     fmt::Display,
     path::{Path, PathBuf},
     sync::Arc,
-    time::Duration,
+    time::{Duration, Instant, SystemTime},
 };
+use tokio::time::error::Elapsed;
+use tracing::info;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
 #[derive(clap::Parser)]
@@ -41,85 +48,9 @@ async fn main() -> eyre::Result<()> {
     let checks = config.checks();
     tracing::info!(config = %args.config.display(), "Loaded {} checks.", checks.len());
     let db = Db::connect(&args.db)?;
-    let mut tasks = tokio::task::JoinSet::new();
-    for check in checks.clone() {
-        let checker = Checker::new(&config, &db, &check);
-        tasks.spawn(async move {
-            checker
-                .run()
-                .await
-                .wrap_err("check failed")
-                .map_or_else(|e| e, |_| eyre::eyre!("{check} quit unexpectedly"))
-        });
-    }
-    while let Some(res) = tasks.join_next().await {
-        let err = res.wrap_err("check panicked")?;
-        eyre::bail!(err);
-    }
+    let checker = Checker::new(&config, &db, checks);
+    checker.run().await?;
     Ok(())
-}
-
-#[allow(unused)]
-#[derive(Debug)]
-struct Checker {
-    cfg: Config,
-    db: Db,
-    check: Check,
-}
-
-impl Checker {
-    fn new(cfg: &Config, db: &Db, check: &Check) -> Self {
-        Self {
-            cfg: cfg.clone(),
-            db: db.clone(),
-            check: check.clone(),
-        }
-    }
-
-    #[tracing::instrument(skip_all)]
-    async fn run(&self) -> eyre::Result<()> {
-        loop {
-            self.check().await?;
-            tokio::time::sleep(self.cfg.interval).await;
-        }
-    }
-
-    async fn check(&self) -> eyre::Result<()> {
-        match &self.check {
-            Check::Ping(ping) => self.ping(ping).await?,
-            Check::Http(http) => self.http(http).await?,
-        }
-        Ok(())
-    }
-
-    #[tracing::instrument(skip_all, fields(name = ping.name))]
-    async fn ping(&self, ping: &Ping) -> eyre::Result<()> {
-        tracing::info!("Skipping ping check");
-        Ok(())
-    }
-
-    #[tracing::instrument(skip_all, fields(name = http.name))]
-    async fn http(&self, http: &Http) -> eyre::Result<()> {
-        tracing::debug!("hi");
-        let client = reqwest::Client::builder()
-            .redirect(reqwest::redirect::Policy::none())
-            .build()
-            .wrap_err("build client")?;
-        let req = client
-            .request(Method::GET, &http.url)
-            .timeout(Duration::from_secs(1))
-            .build()
-            .wrap_err("new request")?;
-        match client.execute(req).await.wrap_err("execute") {
-            Ok(resp) => {
-                tracing::info!("{} -> {}", self.check, resp.status());
-            }
-            Err(err) => {
-                tracing::error!("{} 💥 {err:#}", self.check);
-            }
-        }
-        Ok(())
-    }
 }
 
 type DbPool = r2d2::Pool<SqliteConnectionManager>;
@@ -131,6 +62,40 @@ struct Db {
 }
 
 impl Db {
+    fn record(&self, check: &Check, result: &CheckResult) -> eyre::Result<()> {
+        let name = check.name();
+        match result {
+            CheckResult::Http(HttpResult::Response { resp, latency }) => {
+                let conn = self.get()?;
+                let code = resp.status().as_u16();
+                conn.execute(
+                    "
+                    insert into http_resp
+                    (check_name, error, latency_ms, code)
+                    values
+                    (?1, ?2, ?3, ?4)
+                    ",
+                    (
+                        check.name(),
+                        None::<String>,
+                        latency.as_millis() as i64,
+                        code,
+                    ),
+                )?;
+                Ok(())
+            }
+            CheckResult::Http(HttpResult::Error(err)) => {
+                todo!()
+            }
+            CheckResult::Ping(_) => Ok(()),
+            CheckResult::Timeout(elapsed) => todo!(),
+        }
+    }
+
+    fn get(&self) -> eyre::Result<PooledConnection<SqliteConnectionManager>> {
+        self.pool.get().wrap_err("get conn")
+    }
+
     fn connect(path: &Path) -> eyre::Result<Self> {
         Self::migrate(path).wrap_err("migrate db")?;
         let mgr = SqliteConnectionManager::file(path);
@@ -153,10 +118,131 @@ mod db {
     refinery::embed_migrations!("./migrations");
 }
 
+#[allow(unused)]
+#[derive(Clone, Debug)]
+struct Checker {
+    cfg: Config,
+    db: Db,
+    checks: HashSet<Check>,
+}
+
+enum CheckResult {
+    Ping(PingResult),
+    Http(HttpResult),
+    Timeout(Elapsed),
+}
+
+impl CheckResult {
+    async fn record(&self) -> eyre::Result<()> {
+        Ok(())
+    }
+}
+
+struct PingResult {}
+
+#[derive(Debug)]
+enum HttpResult {
+    // could not make the request
+    Error(reqwest::Error),
+    // we got a response
+    Response {
+        resp: reqwest::Response,
+        latency: Duration,
+    },
+}
+
+impl Checker {
+    fn new(cfg: &Config, db: &Db, checks: HashSet<Check>) -> Self {
+        Self {
+            cfg: cfg.clone(),
+            db: db.clone(),
+            checks: checks.clone(),
+        }
+    }
+
+    #[tracing::instrument(skip_all)]
+    async fn run(self) -> eyre::Result<()> {
+        loop {
+            self.check_all().await?;
+            tokio::time::sleep(self.cfg.interval).await;
+        }
+    }
+
+    // runs all checks once.
+    async fn check_all(&self) -> eyre::Result<()> {
+        let mut tasks = tokio::task::JoinSet::new();
+        for check in &self.checks {
+            let checker = self.clone();
+            let check = check.clone();
+            tasks.spawn(async move { checker.check(&check).await });
+        }
+        while let Some(res) = tasks.join_next().await {
+            res.wrap_err("check panicked")?.wrap_err("check failed")?;
+        }
+        Ok(())
+    }
+
+    #[tracing::instrument(skip_all, fields(kind=check.kind(), name = check.name()))]
+    async fn check(&self, check: &Check) -> eyre::Result<()> {
+        tracing::info!("Running");
+        let timeout = self.cfg.interval;
+        let check_res = tokio::time::timeout(timeout, async move {
+            match check {
+                Check::Http(http) => self.http(http).await.map(CheckResult::Http),
+                Check::Ping(ping) => self.ping(ping).await.map(CheckResult::Ping),
+            }
+        })
+        .await
+        .unwrap_or_else(|err| Ok(CheckResult::Timeout(err)))?;
+        self.db.record(check, &check_res)
+    }
+
+    async fn ping(&self, _ping: &Ping) -> eyre::Result<PingResult> {
+        Ok(PingResult {})
+    }
+
+    async fn http(&self, http: &Http) -> eyre::Result<HttpResult> {
+        let client = reqwest::Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
+            .build()
+            .wrap_err("create http client")?;
+        let req = client
+            .request(Method::GET, &http.url)
+            .build()
+            .wrap_err("create http request")?;
+        let start = Instant::now();
+        let http_result = client
+            .execute(req)
+            .await
+            .map(|resp| HttpResult::Response {
+                resp,
+                latency: start.elapsed(),
+            })
+            .unwrap_or_else(|err| HttpResult::Error(err));
+        Ok(http_result)
+    }
+}
+
 #[derive(Clone, Debug, Hash, PartialEq, Eq)]
 enum Check {
     Ping(Ping),
     Http(Http),
+}
+
+impl Check {
+    fn name(&self) -> &str {
+        match self {
+            Check::Ping(ping) => &ping.name,
+            Check::Http(http) => &http.name,
+        }
+    }
+
+    fn kind(&self) -> &'static str {
+        match self {
+            Check::Ping(_) => "ping",
+            Check::Http(_) => "http",
+        }
+    }
 }
 
 #[derive(Clone, Debug, Hash, PartialEq, Eq)]
