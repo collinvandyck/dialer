@@ -76,23 +76,31 @@ impl Checker {
         }
     }
 
+    #[tracing::instrument(skip_all)]
     async fn run(&self) -> eyre::Result<()> {
         loop {
-            match &self.check {
-                Check::Ping(ping) => self.check_ping(ping).await?,
-                Check::Http(http) => self.check_http(http).await?,
-            }
-            tracing::info!("Running check {}", self.check);
+            self.check().await?;
             tokio::time::sleep(self.cfg.interval).await;
         }
     }
 
-    async fn check_ping(&self, _ping: &Ping) -> eyre::Result<()> {
+    async fn check(&self) -> eyre::Result<()> {
+        match &self.check {
+            Check::Ping(ping) => self.ping(ping).await?,
+            Check::Http(http) => self.http(http).await?,
+        }
         Ok(())
     }
 
-    #[tracing::instrument(skip_all)]
-    async fn check_http(&self, http: &Http) -> eyre::Result<()> {
+    #[tracing::instrument(skip_all, fields(name = ping.name))]
+    async fn ping(&self, ping: &Ping) -> eyre::Result<()> {
+        tracing::info!("Skipping ping check");
+        Ok(())
+    }
+
+    #[tracing::instrument(skip_all, fields(name = http.name))]
+    async fn http(&self, http: &Http) -> eyre::Result<()> {
+        tracing::debug!("hi");
         let client = reqwest::Client::builder()
             .redirect(reqwest::redirect::Policy::none())
             .build()

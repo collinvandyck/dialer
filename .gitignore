@@ -23,5 +23,6 @@ Cargo.lock
 # Added by cargo
 
 /target
-/checks.db
-we.log
+
+/checks.db*
+/we.log
