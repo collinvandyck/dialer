@@ -240,7 +240,17 @@ mod tests {
 
     #[test]
     fn config_serde() {
-        let config = Config::from_str(include_str!("../checks.toml")).unwrap();
+        let config = r#"
+            interval = "1s"
+
+            [ping]
+            google = { host = "google.com" }
+            yahoo = { host = "yahoo.com" }
+
+            [http]
+            google = { url = "https://google.com" }
+            "#;
+        let config = Config::from_str(config).unwrap();
         assert_eq!(config.interval, Duration::from_secs(1));
         let checks = config.checks();
         assert_eq!(
