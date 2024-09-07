@@ -6,16 +6,18 @@ use color_eyre::eyre::{self, Context};
 use r2d2::PooledConnection;
 use r2d2_sqlite::SqliteConnectionManager;
 use reqwest::Method;
-use rusqlite::Connection;
+use rusqlite::{Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use std::{
     borrow::Borrow,
     collections::{HashMap, HashSet},
     fmt::Display,
+    ops::Deref,
     path::{Path, PathBuf},
     sync::Arc,
     time::{Duration, Instant, SystemTime},
 };
+use strum_macros::EnumString;
 use tokio::time::error::Elapsed;
 use tracing::info;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
@@ -48,6 +50,7 @@ async fn main() -> eyre::Result<()> {
     let checks = config.checks();
     tracing::info!(config = %args.config.display(), "Loaded {} checks.", checks.len());
     let db = Db::connect(&args.db)?;
+    config.materialize(db.clone()).await?;
     let checker = Checker::new(&config, &db, checks);
     checker.run().await?;
     Ok(())
@@ -61,31 +64,79 @@ struct Db {
     pool: Arc<DbPool>,
 }
 
+struct DbCheck {
+    id: u64,
+    name: String,
+    kind: String,
+    check: Check,
+}
+
 impl Db {
+    fn ensure_check(&self, check: &Check) -> eyre::Result<DbCheck> {
+        let conn = self.get()?;
+        let name = check.name();
+        let kind = check.kind();
+        if let Some(check) = conn
+            .query_row(
+                "select * from checks where name=?1 and kind=?2",
+                (name, kind),
+                |row| {
+                    Ok(DbCheck {
+                        id: row.get(0)?,
+                        name: row.get(1)?,
+                        kind: row.get(2)?,
+                        check: check.clone(),
+                    })
+                },
+            )
+            .optional()?
+        {
+            return Ok(check);
+        }
+        Ok(conn.query_row(
+            "insert into checks (name,kind) values (?1, ?2) returning *",
+            (name, kind),
+            |row| {
+                Ok(DbCheck {
+                    id: row.get(0)?,
+                    name: row.get(1)?,
+                    kind: row.get(2)?,
+                    check: check.clone(),
+                })
+            },
+        )?)
+    }
+
     fn record(&self, check: &Check, result: &CheckResult) -> eyre::Result<()> {
         let name = check.name();
         match result {
-            CheckResult::Http(HttpResult::Response { resp, latency }) => {
+            CheckResult::Http(HttpResult::Response { code, latency }) => {
                 let conn = self.get()?;
-                let code = resp.status().as_u16();
                 conn.execute(
                     "
                     insert into http_resp
-                    (check_name, error, latency_ms, code)
+                    (check_name, latency_ms, code)
                     values
-                    (?1, ?2, ?3, ?4)
+                    (?1, ?2, ?3)
                     ",
-                    (
-                        check.name(),
-                        None::<String>,
-                        latency.as_millis() as i64,
-                        code,
-                    ),
+                    (check.name(), latency.as_millis() as i64, code),
                 )?;
                 Ok(())
             }
             CheckResult::Http(HttpResult::Error(err)) => {
-                todo!()
+                let kind = err.kind.to_string();
+                let err = err.to_string();
+                let conn = self.get()?;
+                conn.execute(
+                    "
+                    insert into http_resp
+                    (check_name, error, error_kind)
+                    values
+                    (?1, ?2, ?3)
+                    ",
+                    (check.name(), err, kind),
+                )?;
+                Ok(())
             }
             CheckResult::Ping(_) => Ok(()),
             CheckResult::Timeout(elapsed) => todo!(),
@@ -143,12 +194,51 @@ struct PingResult {}
 #[derive(Debug)]
 enum HttpResult {
     // could not make the request
-    Error(reqwest::Error),
+    Error(ReqwestError),
     // we got a response
-    Response {
-        resp: reqwest::Response,
-        latency: Duration,
-    },
+    Response { code: u16, latency: Duration },
+}
+
+#[derive(Debug)]
+struct ReqwestError {
+    err: reqwest::Error,
+    kind: RequestErrorKind,
+}
+
+impl Deref for ReqwestError {
+    type Target = reqwest::Error;
+    fn deref(&self) -> &Self::Target {
+        &self.err
+    }
+}
+
+impl From<reqwest::Error> for ReqwestError {
+    fn from(err: reqwest::Error) -> Self {
+        let kind = (&err).into();
+        Self { err, kind }
+    }
+}
+
+#[derive(Debug, Clone, Copy, strum_macros::Display)]
+enum RequestErrorKind {
+    Status,
+    Body,
+    Decode,
+    Unknown,
+}
+
+impl From<&reqwest::Error> for RequestErrorKind {
+    fn from(err: &reqwest::Error) -> Self {
+        if err.is_status() {
+            RequestErrorKind::Status
+        } else if err.is_body() {
+            RequestErrorKind::Body
+        } else if err.is_decode() {
+            RequestErrorKind::Decode
+        } else {
+            RequestErrorKind::Unknown
+        }
+    }
 }
 
 impl Checker {
@@ -214,11 +304,14 @@ impl Checker {
         let http_result = client
             .execute(req)
             .await
-            .map(|resp| HttpResult::Response {
-                resp,
-                latency: start.elapsed(),
+            .map(|resp| {
+                let code = resp.status().as_u16();
+                HttpResult::Response {
+                    code,
+                    latency: start.elapsed(),
+                }
             })
-            .unwrap_or_else(|err| HttpResult::Error(err));
+            .unwrap_or_else(|err| HttpResult::Error(ReqwestError::from(err)));
         Ok(http_result)
     }
 }
@@ -277,6 +370,13 @@ struct Config {
 }
 
 impl Config {
+    /// ensures that the checks are recorded into the sqlite db
+    async fn materialize(&self, db: Db) -> eyre::Result<()> {
+        for check in self.checks() {
+            db.ensure_check(&check)?;
+        }
+        Ok(())
+    }
     async fn from_path(p: &Path) -> eyre::Result<Self> {
         tokio::fs::read(p)
             .await

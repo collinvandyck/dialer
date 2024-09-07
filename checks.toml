@@ -4,5 +4,9 @@ interval = "1s"
 google = { host = "google.com" }
 yahoo = { host = "yahoo.com" }
 
+[http.google]
+url = "https://www.google.com/"
+code = 200
+
 [http]
-google = { url = "https://google.com" }
+yahoo = { url = "https://www.yahoo.com/" }
