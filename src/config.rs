@@ -12,14 +12,14 @@ pub struct Config {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-struct Ping {
-    host: String,
+pub struct Ping {
+    pub host: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-struct Http {
-    url: String,
-    code: Option<u32>,
+pub struct Http {
+    pub url: String,
+    pub code: Option<u32>,
 }
 
 impl Config {
