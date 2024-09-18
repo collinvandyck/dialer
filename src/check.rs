@@ -1,7 +1,13 @@
-use std::time::Instant;
+use core::net;
+use std::{
+    net::{AddrParseError, IpAddr},
+    time::{Duration, Instant},
+};
 
 use async_trait::async_trait;
+use ping_rs::{PingError, PingOptions, PingReply};
 use reqwest::Method;
+use tokio::task::spawn_blocking;
 use tracing::instrument;
 
 use crate::config;
@@ -10,6 +16,9 @@ use crate::config;
 pub enum Error {
     #[error("could not parse url: {0}")]
     ParseUrl(#[source] url::ParseError),
+
+    #[error("could not parse host: {0}")]
+    ParseIpAddr(#[source] AddrParseError),
 
     #[error("could not build http client: {0}")]
     BuildHttpClient(#[source] reqwest::Error),
@@ -36,6 +45,8 @@ impl Http {
         })
     }
 
+    /// does one check. an Err variant is an application level error. the HttpResult will contain
+    /// any sort of http related error.
     async fn check(&self) -> Result<HttpResult, Error> {
         let client: reqwest::Client = reqwest::Client::builder()
             .redirect(reqwest::redirect::Policy::none())
@@ -73,8 +84,26 @@ impl Ping {
 
     #[instrument(skip_all, fields(kind="ping", name = self.name))]
     async fn check(&self) -> Result<PingResult, Error> {
-        todo!()
+        let opts = PingOptions {
+            ttl: 128,
+            dont_fragment: true,
+        };
+        let addr = self.host.parse().map_err(Error::ParseIpAddr)?;
+        // todo: better timeout
+        let timeout = Duration::from_secs(1);
+        // todo: what should the ping data be
+        let data = [1, 2, 3, 4];
+        tokio::task::spawn_blocking(move || {
+            ping_rs::send_ping(&addr, timeout, &data, Some(&opts))
+                .map(|reply| PingResult::Reply { reply })
+                .or_else(|err| Ok(PingResult::Error { err }))
+        })
+        .await
+        .unwrap()
     }
 }
 
-struct PingResult {}
+enum PingResult {
+    Reply { reply: PingReply },
+    Error { err: PingError },
+}
