@@ -29,7 +29,7 @@ pub struct Db {
 
 pub async fn connect(path: &Path) -> Result<Db, Error> {
     let path = path.to_path_buf();
-    tokio::task::spawn_blocking(move || {
+    run_blocking(move || {
         migrate(&path)?;
         let mgr = SqliteConnectionManager::file(path);
         let pool = r2d2::Pool::new(mgr).map_err(Error::CreatePool)?;
@@ -37,30 +37,18 @@ pub async fn connect(path: &Path) -> Result<Db, Error> {
         Ok(Db { pool })
     })
     .await
-    .unwrap()
 }
 
-pub async fn connect_simple(path: &Path) -> Result<Db, Error> {
-    let path = path.to_path_buf();
-    let res = blocking(move || {
-        migrate(&path)?;
-        let mgr = SqliteConnectionManager::file(path);
-        let pool = r2d2::Pool::new(mgr).map_err(Error::CreatePool)?;
-        let pool = Arc::new(pool);
-        Ok(Db { pool })
-    })
-    .await;
-    todo!()
-}
-
-async fn blocking<F, R>(f: F) -> Result<R, Error>
+/// convenience method to run something on the blocking pool. maps the join error into
+/// Error::JoinError.
+async fn run_blocking<F, R>(f: F) -> Result<R, Error>
 where
-    F: FnOnce() -> R + Send + 'static,
+    F: FnOnce() -> Result<R, Error> + Send + 'static,
     R: Send + 'static,
 {
     tokio::task::spawn_blocking(f)
         .await
-        .or_else(|err| Err(Error::JoinError(err)))
+        .unwrap_or_else(|err| Err(Error::JoinError(err)))
 }
 
 // todo: use blocking threadpool for db runs
