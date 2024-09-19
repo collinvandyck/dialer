@@ -27,6 +27,46 @@ pub enum Error {
     BuildHttpRequest(#[source] reqwest::Error),
 }
 
+#[derive(Clone, Copy, Debug)]
+pub enum Kind {
+    Http,
+    Ping,
+}
+
+impl Kind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Kind::Http => "http",
+            Kind::Ping => "ping",
+        }
+    }
+}
+
+pub trait Check {
+    fn name(&self) -> String;
+    fn kind(&self) -> Kind;
+}
+
+impl Check for Http {
+    fn name(&self) -> String {
+        self.name.clone()
+    }
+
+    fn kind(&self) -> Kind {
+        Kind::Http
+    }
+}
+
+impl Check for Ping {
+    fn name(&self) -> String {
+        self.name.clone()
+    }
+
+    fn kind(&self) -> Kind {
+        Kind::Ping
+    }
+}
+
 pub struct Opts {}
 
 pub struct Http {
