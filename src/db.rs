@@ -1,12 +1,10 @@
-use std::{path::Path, sync::Arc};
-
+use crate::check::{self, Check};
 use eyre::Context;
 use r2d2::PooledConnection;
 use r2d2_sqlite::SqliteConnectionManager;
 use rusqlite::{Connection, OptionalExtension};
+use std::{path::Path, sync::Arc};
 use tokio::task::{self, JoinError};
-
-use crate::check::{self, Check};
 
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
@@ -94,6 +92,59 @@ impl Db {
         .await
         .unwrap_or_else(|err| Err(Error::JoinError(err)))
     }
+
+    async fn record_http(&self, check: &check::Http, res: &check::HttpResult) -> Result<(), Error> {
+        let db = self.clone();
+        match res {
+            check::HttpResult::Response { resp, latency } => {
+                let name = check.name();
+                let code = resp.status().as_u16();
+                let latency = latency.as_millis() as i64;
+                task::spawn_blocking(move || {
+                    let conn = db.pool.get().map_err(Error::GetConn)?;
+                    conn.execute(
+                        "insert into http_resp
+                        (check_name, latency_ms, code)
+                        values (?1, ?2, ?3)",
+                        (name, latency, code),
+                    )?;
+                    Ok(())
+                })
+                .await
+                .unwrap_or_else(|err| Err(Error::JoinError(err)))
+            }
+            check::HttpResult::Error { err, latency } => {
+                let name = check.name();
+                let kind = {
+                    if err.is_status() {
+                        "status"
+                    } else if err.is_body() {
+                        "body"
+                    } else if err.is_decode() {
+                        "decode"
+                    } else {
+                        "unknown"
+                    }
+                };
+                let err = err.to_string();
+                task::spawn_blocking(move || {
+                    let conn = db.pool.get().map_err(Error::GetConn)?;
+                    conn.execute(
+                        "insert into http_resp
+                        (check_name, error, error_kind)
+                        values (?1, ?2, ?3)",
+                        (name, err, kind),
+                    )?;
+                    Ok(())
+                })
+                .await
+                .unwrap_or_else(|err| Err(Error::JoinError(err)))
+            }
+        };
+        todo!()
+    }
+
+    async fn record_ping(&self, res: check::PingResult) {}
 
     /// migrates the db at the specified path. is not compatible with the sqlite pool so we open a
     /// connection manually.

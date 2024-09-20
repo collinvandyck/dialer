@@ -97,17 +97,32 @@ impl Http {
             .request(Method::GET, self.url.as_ref())
             .build()
             .map_err(Error::BuildHttpRequest)?;
+        let start = Instant::now();
         client
             .execute(req)
             .await
-            .map(|resp| HttpResult::Response { resp })
-            .or_else(|err| Ok(HttpResult::Error { err }))
+            .map(|resp| HttpResult::Response {
+                resp,
+                latency: start.elapsed(),
+            })
+            .or_else(|err| {
+                Ok(HttpResult::Error {
+                    err,
+                    latency: start.elapsed(),
+                })
+            })
     }
 }
 
-enum HttpResult {
-    Response { resp: reqwest::Response },
-    Error { err: reqwest::Error },
+pub enum HttpResult {
+    Response {
+        resp: reqwest::Response,
+        latency: Duration,
+    },
+    Error {
+        err: reqwest::Error,
+        latency: Duration,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -145,7 +160,7 @@ impl Ping {
     }
 }
 
-enum PingResult {
+pub enum PingResult {
     Reply { reply: PingReply },
     Error { err: PingError },
 }
