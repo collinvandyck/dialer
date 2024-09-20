@@ -33,23 +33,40 @@ pub struct Db {
     pool: Arc<DbPool>,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DbCheck<Check> {
     check: Check,
     id: u64,
 }
 
 impl<C: Check> DbCheck<C> {
-    fn new(check: C, id: u64) -> Self {
-        Self { check, id }
+    fn new(check: &C, id: u64) -> Self {
+        Self {
+            check: check.clone(),
+            id,
+        }
     }
 
     fn from_id_row(check: &C, row: &rusqlite::Row) -> Result<Self, Error> {
-        Ok(Self::new(check.clone(), row.get(0)?))
+        let id = row.get(0)?;
+        Ok(Self::new(check, id))
     }
 }
 
 impl Db {
+    async fn connect(path: &Path) -> Result<Self, Error> {
+        let path = path.to_path_buf();
+        task::spawn_blocking(move || {
+            Self::migrate(&path)?;
+            let mgr = SqliteConnectionManager::file(path);
+            let pool = r2d2::Pool::new(mgr).map_err(Error::CreatePool)?;
+            let pool = Arc::new(pool);
+            Ok(Db { pool })
+        })
+        .await
+        .unwrap_or_else(|err| Err(Error::JoinError(err)))
+    }
+
     async fn ensure_check<C>(&self, check: &C) -> Result<DbCheck<C>, Error>
     where
         C: Check + 'static,
@@ -77,28 +94,16 @@ impl Db {
         .await
         .unwrap_or_else(|err| Err(Error::JoinError(err)))
     }
-}
 
-pub async fn connect(path: &Path) -> Result<Db, Error> {
-    let path = path.to_path_buf();
-    task::spawn_blocking(move || {
-        migrate(&path)?;
-        let mgr = SqliteConnectionManager::file(path);
-        let pool = r2d2::Pool::new(mgr).map_err(Error::CreatePool)?;
-        let pool = Arc::new(pool);
-        Ok(Db { pool })
-    })
-    .await
-    .unwrap_or_else(|err| Err(Error::JoinError(err)))
-}
-
-/// runs the migrations for the db at the specified path.
-fn migrate(path: &Path) -> Result<(), Error> {
-    let mut conn = Connection::open(path)?;
-    migrate::migrations::runner()
-        .run(&mut conn)
-        .map_err(Error::Migrate)?;
-    Ok(())
+    /// migrates the db at the specified path. is not compatible with the sqlite pool so we open a
+    /// connection manually.
+    fn migrate(path: &Path) -> Result<(), Error> {
+        let mut conn = Connection::open(path)?;
+        migrate::migrations::runner()
+            .run(&mut conn)
+            .map_err(Error::Migrate)?;
+        Ok(())
+    }
 }
 
 mod migrate {
@@ -120,17 +125,14 @@ mod tests {
     async fn ensure() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.as_ref().join("test.db");
-        let db = connect(&path).await.unwrap();
+        let db = Db::connect(&path).await.unwrap();
         let check = check::Ping {
             name: String::from("ping-name"),
             host: String::from("ping-host"),
         };
         let dbcheck = db.ensure_check(&check).await.unwrap();
-        assert_eq!(dbcheck.id, 1_u64);
-        assert_eq!(dbcheck.check, check);
-
+        assert_eq!(dbcheck, DbCheck::new(&check, 1));
         let dbcheck = db.ensure_check(&check).await.unwrap();
-        assert_eq!(dbcheck.id, 1_u64);
-        assert_eq!(dbcheck.check, check);
+        assert_eq!(dbcheck, DbCheck::new(&check, 1));
     }
 }
