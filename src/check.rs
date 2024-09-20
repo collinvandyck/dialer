@@ -110,10 +110,10 @@ enum HttpResult {
     Error { err: reqwest::Error },
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Ping {
-    name: String,
-    host: String,
+    pub name: String,
+    pub host: String,
 }
 
 impl Ping {
