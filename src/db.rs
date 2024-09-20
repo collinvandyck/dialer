@@ -3,7 +3,7 @@ use std::{path::Path, sync::Arc};
 use eyre::Context;
 use r2d2::PooledConnection;
 use r2d2_sqlite::SqliteConnectionManager;
-use rusqlite::Connection;
+use rusqlite::{Connection, OptionalExtension};
 use tokio::task::{self, JoinError};
 
 use crate::check::{self, Check};
@@ -38,24 +38,38 @@ pub struct DbCheck<Check> {
     id: u64,
 }
 
+impl<C: Check> DbCheck<C> {
+    fn new(check: &C, id: u64) -> Self {
+        Self {
+            check: check.clone(),
+            id,
+        }
+    }
+    fn from_id_row(check: &C, row: &rusqlite::Row) -> Result<Self, Error> {
+        Ok(Self::new(check, row.get(0)?))
+    }
+}
+
 impl Db {
-    async fn ensure_check<C: Check + 'static>(&self, check: C) -> Result<DbCheck<C>, Error> {
+    async fn ensure_check<C: Check>(&self, check: C) -> Result<DbCheck<C>, Error> {
         let db = self.clone();
         task::block_in_place(move || {
             let conn = db.pool.get().map_err(Error::GetConn)?;
             let name = check.name();
             let kind = check.kind().as_str();
-            let f = conn.query_row(
+            conn.query_row(
                 "select id from checks where name=?1 and kind=?2",
-                (name, kind),
-                |row| {
-                    Ok(DbCheck {
-                        check,
-                        id: row.get(0)?,
-                    })
-                },
-            )?;
-            Ok(f)
+                (&name, kind),
+                |row| Ok(DbCheck::from_id_row(&check, row)),
+            )
+            .optional()?
+            .unwrap_or_else(|| {
+                conn.query_row(
+                    "insert into checks (name, kind) values (?1, ?2) returning *",
+                    (&name, kind),
+                    |row| Ok(DbCheck::from_id_row(&check, row)),
+                )?
+            })
         })
     }
 }

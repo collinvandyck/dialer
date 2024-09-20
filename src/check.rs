@@ -42,7 +42,7 @@ impl Kind {
     }
 }
 
-pub trait Check {
+pub trait Check: Clone {
     fn name(&self) -> String;
     fn kind(&self) -> Kind;
 }
@@ -69,6 +69,7 @@ impl Check for Ping {
 
 pub struct Opts {}
 
+#[derive(Debug, Clone)]
 pub struct Http {
     name: String,
     url: reqwest::Url,
@@ -109,6 +110,7 @@ enum HttpResult {
     Error { err: reqwest::Error },
 }
 
+#[derive(Debug, Clone)]
 pub struct Ping {
     name: String,
     host: String,
