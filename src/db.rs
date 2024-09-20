@@ -140,8 +140,7 @@ impl Db {
                 .await
                 .unwrap_or_else(|err| Err(Error::JoinError(err)))
             }
-        };
-        todo!()
+        }
     }
 
     async fn record_ping(&self, res: check::PingResult) {}
