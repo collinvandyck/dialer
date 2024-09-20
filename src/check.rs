@@ -42,7 +42,7 @@ impl Kind {
     }
 }
 
-pub trait Check: Clone {
+pub trait Check: Clone + Send + Sync {
     fn name(&self) -> String;
     fn kind(&self) -> Kind;
 }
