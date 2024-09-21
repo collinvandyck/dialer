@@ -65,7 +65,7 @@ impl Db {
         .unwrap_or_else(|err| Err(Error::JoinError(err)))
     }
 
-    async fn ensure_check<C>(&self, check: &C) -> Result<DbCheck<C>, Error>
+    pub async fn ensure_check<C>(&self, check: &C) -> Result<DbCheck<C>, Error>
     where
         C: Check + 'static,
     {

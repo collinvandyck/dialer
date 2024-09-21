@@ -8,7 +8,7 @@ use async_trait::async_trait;
 use ping_rs::{PingError, PingOptions, PingReply};
 use reqwest::Method;
 use tokio::task::spawn_blocking;
-use tracing::instrument;
+use tracing::{info, instrument};
 
 use crate::config;
 
@@ -28,10 +28,15 @@ pub enum Error {
 
     #[error("could not connect to db: {0}")]
     DbConnect(#[source] crate::db::Error),
+
+    #[error("could not persist check: {0}")]
+    EnsureCheck(#[source] crate::db::Error),
 }
 
+#[derive(Clone)]
 pub struct Checker {
     db: crate::db::Db,
+    config: crate::config::Config,
 }
 
 impl Checker {
@@ -39,11 +44,34 @@ impl Checker {
         let db = crate::db::Db::connect(&config.db_path)
             .await
             .map_err(Error::DbConnect)?;
-        Ok(Self { db })
+        let https = config
+            .http
+            .iter()
+            .map(Http::try_from)
+            .collect::<Result<Vec<_>, Error>>()?;
+        let pings = config
+            .ping
+            .iter()
+            .map(Ping::try_from)
+            .collect::<Result<Vec<_>, Error>>()?;
+        Ok(Self {
+            db,
+            config: config.clone(),
+        })
     }
 
     pub async fn run(&self) -> Result<(), Error> {
-        todo!()
+        loop {
+            let now = Instant::now();
+            self.clone().run_once().await?;
+            let sleep = self.config.interval.saturating_sub(now.elapsed());
+            tokio::time::sleep(sleep).await;
+            tracing::info!("hi");
+        }
+    }
+
+    async fn run_once(&self) -> Result<(), Error> {
+        Ok(())
     }
 }
 
@@ -94,6 +122,18 @@ pub struct Http {
     name: String,
     url: reqwest::Url,
     code: Option<u32>,
+}
+
+impl TryFrom<(&String, &config::Http)> for Http {
+    type Error = Error;
+    fn try_from((name, http): (&String, &config::Http)) -> Result<Self, Self::Error> {
+        let url = reqwest::Url::parse(&http.url).map_err(Error::ParseUrl)?;
+        Ok(Self {
+            name: name.to_string(),
+            url,
+            code: http.code.clone(),
+        })
+    }
 }
 
 impl Http {
@@ -149,6 +189,16 @@ pub enum HttpResult {
 pub struct Ping {
     pub name: String,
     pub host: String,
+}
+
+impl TryFrom<(&String, &config::Ping)> for Ping {
+    type Error = Error;
+    fn try_from((name, ping): (&String, &config::Ping)) -> Result<Self, Self::Error> {
+        Ok(Self {
+            name: name.to_string(),
+            host: ping.host.clone(),
+        })
+    }
 }
 
 impl Ping {
