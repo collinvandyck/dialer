@@ -150,10 +150,19 @@ impl Ping {
         let timeout = Duration::from_secs(1);
         // todo: what should the ping data be
         let data = [1, 2, 3, 4];
+        let start = Instant::now();
         tokio::task::spawn_blocking(move || {
             ping_rs::send_ping(&addr, timeout, &data, Some(&opts))
-                .map(|reply| PingResult::Reply { reply })
-                .or_else(|err| Ok(PingResult::Error { err }))
+                .map(|reply| PingResult::Reply {
+                    reply,
+                    latency: start.elapsed(),
+                })
+                .or_else(|err| {
+                    Ok(PingResult::Error {
+                        err,
+                        latency: start.elapsed(),
+                    })
+                })
         })
         .await
         .unwrap()
@@ -161,6 +170,6 @@ impl Ping {
 }
 
 pub enum PingResult {
-    Reply { reply: PingReply },
-    Error { err: PingError },
+    Reply { reply: PingReply, latency: Duration },
+    Error { err: PingError, latency: Duration },
 }

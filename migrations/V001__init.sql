@@ -20,3 +20,13 @@ create table http_resp (
     error_kind text
 );
 create index idx_http_resp_ts on http_resp(ts);
+
+create table ping_resp (
+    id integer primary key autoincrement,
+    check_name text not null,
+    ts timestamp default current_timestamp,
+    latency_ms integer not null,
+    error text,
+    error_kind text
+);
+create index idx_ping_resp_ts on ping_resp(ts);
