@@ -25,6 +25,26 @@ pub enum Error {
 
     #[error("could not build http request: {0}")]
     BuildHttpRequest(#[source] reqwest::Error),
+
+    #[error("could not connect to db: {0}")]
+    DbConnect(#[source] crate::db::Error),
+}
+
+pub struct Checker {
+    db: crate::db::Db,
+}
+
+impl Checker {
+    pub async fn from_config(config: &config::Config) -> Result<Self, Error> {
+        let db = crate::db::Db::connect(&config.db_path)
+            .await
+            .map_err(Error::DbConnect)?;
+        Ok(Self { db })
+    }
+
+    pub async fn run(&self) -> Result<(), Error> {
+        todo!()
+    }
 }
 
 #[derive(Clone, Copy, Debug)]

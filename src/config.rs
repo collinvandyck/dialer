@@ -1,14 +1,19 @@
-use std::{collections::HashMap, path::Path, time::Duration};
+use std::{
+    collections::HashMap,
+    path::{Path, PathBuf},
+    time::Duration,
+};
 
 use eyre::Context;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
 pub struct Config {
+    pub db_path: PathBuf,
     #[serde(with = "humantime_serde")]
-    interval: Duration,
-    ping: HashMap<String, Ping>,
-    http: HashMap<String, Http>,
+    pub interval: Duration,
+    pub ping: HashMap<String, Ping>,
+    pub http: HashMap<String, Http>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -23,7 +28,7 @@ pub struct Http {
 }
 
 impl Config {
-    async fn from_path(p: impl AsRef<Path>) -> eyre::Result<Self> {
+    pub async fn from_path(p: impl AsRef<Path>) -> eyre::Result<Self> {
         let p = p.as_ref();
         tokio::fs::read(p)
             .await
@@ -54,6 +59,7 @@ mod tests {
             "read config file at foo: No such file or directory (os error 2)"
         );
         let config = r#"
+            db_path = "checks.db"
             interval = "1s"
 
             [ping]
@@ -70,6 +76,7 @@ mod tests {
         assert_eq!(
             config,
             Config {
+                db_path: PathBuf::from("checks.db"),
                 interval: Duration::from_secs(1),
                 ping: HashMap::from([
                     (
@@ -99,6 +106,7 @@ mod tests {
     #[test]
     fn config_serde() {
         let config = r#"
+            db_path = "checks.db"
             interval = "1s"
 
             [ping]
@@ -112,6 +120,7 @@ mod tests {
         assert_eq!(
             config,
             Config {
+                db_path: PathBuf::from("checks.db"),
                 interval: Duration::from_secs(1),
                 ping: HashMap::from([
                     (

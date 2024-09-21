@@ -52,7 +52,7 @@ impl<C: Check> DbCheck<C> {
 }
 
 impl Db {
-    async fn connect(path: &Path) -> Result<Self, Error> {
+    pub async fn connect(path: &Path) -> Result<Self, Error> {
         let path = path.to_path_buf();
         task::spawn_blocking(move || {
             Self::migrate(&path)?;

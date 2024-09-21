@@ -1,4 +1,5 @@
 interval = "1s"
+db_path = "checks.db"
 
 [ping]
 google = { host = "google.com" }
