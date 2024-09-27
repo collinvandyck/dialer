@@ -1,6 +1,9 @@
 loop:
     watchexec -r -- sh -c "'rm -f checks.db* && cargo run --bin local'"
 
+db:
+    sqlite3 checks.db
+
 clean:
     rm -f checks.db
 

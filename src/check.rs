@@ -1,5 +1,6 @@
 use core::net;
 use std::{
+    fmt::Display,
     net::{AddrParseError, IpAddr},
     time::{Duration, Instant},
 };
@@ -40,8 +41,28 @@ pub enum Error {
 pub struct Checker {
     db: crate::db::Db,
     config: crate::config::Config,
-    https: Vec<Http>,
-    pings: Vec<Ping>,
+    checks: Vec<ACheck>,
+}
+
+#[derive(Debug, Clone)]
+enum ACheck {
+    Http(Http),
+    Ping(Ping),
+}
+
+impl ACheck {
+    fn name(&self) -> &str {
+        match self {
+            ACheck::Http(c) => &c.name,
+            ACheck::Ping(c) => &c.name,
+        }
+    }
+    fn kind(&self) -> Kind {
+        match self {
+            ACheck::Http(_) => Kind::Http,
+            ACheck::Ping(_) => Kind::Ping,
+        }
+    }
 }
 
 impl Checker {
@@ -49,21 +70,19 @@ impl Checker {
         let db = crate::db::Db::connect(&config.db_path)
             .await
             .map_err(Error::DbConnect)?;
-        let mut https = vec![];
+        let mut checks = vec![];
         for (name, http) in &config.http {
             let http = Http::build(name, http, &db).await?;
-            https.push(http);
+            checks.push(ACheck::Http(http));
         }
-        let mut pings = vec![];
         for (name, ping) in &config.ping {
             let ping = Ping::build(name, ping, &db).await?;
-            pings.push(ping);
+            checks.push(ACheck::Ping(ping));
         }
         Ok(Self {
             db,
             config: config.clone(),
-            https,
-            pings,
+            checks,
         })
     }
 
@@ -78,6 +97,11 @@ impl Checker {
 
     async fn run_once(&self) -> Result<(), Error> {
         tracing::info!("Running once.");
+        for check in &self.checks {
+            let name = check.name();
+            let kind = check.kind();
+            tracing::info!("check: {kind}:{name}");
+        }
         Ok(())
     }
 }
@@ -86,6 +110,15 @@ impl Checker {
 pub enum Kind {
     Http,
     Ping,
+}
+
+impl Display for Kind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Kind::Http => write!(f, "http"),
+            Kind::Ping => write!(f, "ping"),
+        }
+    }
 }
 
 impl Kind {
