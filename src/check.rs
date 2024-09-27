@@ -37,6 +37,12 @@ pub enum Error {
     Materialize(#[source] crate::db::Error),
 }
 
+pub async fn run(config: &config::Config) -> Result<(), Error> {
+    let checker = Checker::from_config(config).await?;
+    checker.run().await?;
+    Ok(())
+}
+
 #[derive(Clone)]
 pub struct Checker {
     db: crate::db::Db,
@@ -66,7 +72,7 @@ impl ACheck {
 }
 
 impl Checker {
-    pub async fn from_config(config: &config::Config) -> Result<Self, Error> {
+    async fn from_config(config: &config::Config) -> Result<Self, Error> {
         let db = crate::db::Db::connect(&config.db_path)
             .await
             .map_err(Error::DbConnect)?;

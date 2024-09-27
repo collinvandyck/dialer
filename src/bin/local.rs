@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 use clap::Parser;
-use dialer::config::Config;
+use dialer::{check, config::Config};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
 #[derive(clap::Parser)]
@@ -23,7 +23,6 @@ async fn main() -> eyre::Result<()> {
         .init();
     let args = Args::parse();
     let config = Config::from_path(&args.config).await?;
-    let checker = dialer::check::Checker::from_config(&config).await?;
-    checker.run().await?;
+    check::run(&config).await?;
     Ok(())
 }
