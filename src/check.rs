@@ -8,7 +8,7 @@ use std::{
 use async_trait::async_trait;
 use ping_rs::{PingError, PingOptions, PingReply};
 use reqwest::Method;
-use tokio::task::spawn_blocking;
+use tokio::task::{spawn_blocking, JoinSet};
 use tracing::{info, instrument};
 
 use crate::{config, db};
@@ -95,19 +95,29 @@ impl Checker {
     pub async fn run(&self) -> Result<(), Error> {
         loop {
             let now = Instant::now();
-            let deadline = now + self.config.interval;
-            self.run_once(deadline).await?;
+            self.run_once().await?;
             let sleep = self.config.interval.saturating_sub(now.elapsed());
             tokio::time::sleep(sleep).await;
         }
     }
 
-    async fn run_once(&self, deadline: Instant) -> Result<(), Error> {
+    async fn run_once(&self) -> Result<(), Error> {
+        let mut tasks = JoinSet::default();
+        tracing::info!("Spawning {} checks...", self.checks.len());
         for check in &self.checks {
-            let name = check.name();
-            let kind = check.kind();
-            tracing::info!("check: {kind}:{name}");
+            let check = check.clone();
+            let checker = self.clone();
+            tasks.spawn(async move { checker.run_check_once(&check).await });
         }
+        while let Some(_) = tasks.join_next().await {}
+        tracing::info!("{} checks completed.", self.checks.len());
+        Ok(())
+    }
+
+    async fn run_check_once(&self, check: &ACheck) -> Result<(), Error> {
+        let name = check.name();
+        let kind = check.kind();
+        tracing::info!("check: {kind}:{name}");
         Ok(())
     }
 }
