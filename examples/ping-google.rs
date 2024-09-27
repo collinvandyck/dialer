@@ -1,15 +1,10 @@
 #![allow(unused)]
-use std::time::Duration;
 
-fn main() {
+#[tokio::main]
+async fn main() {
     let ips = dns_lookup::lookup_host("google.com").unwrap();
     let addr = ips.into_iter().filter(|ip| ip.is_ipv4()).next().unwrap();
-    let timeout = Duration::from_secs(20);
-    let data = [8; 8];
-    let opts = ping_rs::PingOptions {
-        ttl: 128,
-        dont_fragment: true,
-    };
-    let res: ping_rs::PingReply = ping_rs::send_ping(&addr, timeout, &[], Some(&opts)).unwrap();
-    println!("got here");
+    let data = [0; 8];
+    let (pkt, dur) = surge_ping::ping(addr, &data).await.unwrap();
+    println!("ok! pkt:{pkt:#?} dur:{dur:?}");
 }
