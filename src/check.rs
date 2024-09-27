@@ -8,7 +8,7 @@ use std::{
 use async_trait::async_trait;
 use ping_rs::{PingError, PingOptions, PingReply};
 use reqwest::Method;
-use tokio::task::{spawn_blocking, JoinSet};
+use tokio::task::{spawn_blocking, JoinError, JoinSet};
 use tracing::{info, instrument};
 
 use crate::{config, db};
@@ -35,6 +35,9 @@ pub enum Error {
 
     #[error("could not materialize check: {0}")]
     Materialize(#[source] crate::db::Error),
+
+    #[error("check panicked: {0}")]
+    CheckPanic(#[source] tokio::task::JoinError),
 }
 
 pub async fn run(config: &config::Config) -> Result<(), Error> {
@@ -67,6 +70,12 @@ impl ACheck {
         match self {
             ACheck::Http(_) => Kind::Http,
             ACheck::Ping(_) => Kind::Ping,
+        }
+    }
+    async fn run(&self) -> Result<(), Error> {
+        match self {
+            ACheck::Http(http) => http.run().await,
+            ACheck::Ping(ping) => ping.run().await,
         }
     }
 }
@@ -109,7 +118,12 @@ impl Checker {
             let checker = self.clone();
             tasks.spawn(async move { checker.run_check_once(&check).await });
         }
-        while let Some(_) = tasks.join_next().await {}
+        while let Some(res) = tasks.join_next().await {
+            let res = res.map_err(Error::CheckPanic)?;
+            if let Err(err) = res {
+                tracing::error!("check failed: {err}");
+            }
+        }
         tracing::info!("{} checks completed.", self.checks.len());
         Ok(())
     }
@@ -118,6 +132,7 @@ impl Checker {
         let name = check.name();
         let kind = check.kind();
         tracing::info!("check: {kind}:{name}");
+        check.run().await?;
         Ok(())
     }
 }
@@ -196,6 +211,13 @@ impl Http {
         })
     }
 
+    #[instrument(skip_all, fields(kind="ping", name = self.name))]
+    async fn run(&self) -> Result<(), Error> {
+        let http_res = self.check().await?;
+        tracing::info!("http res: {http_res}");
+        Ok(())
+    }
+
     /// does one check. an Err variant is an application level error. the HttpResult will contain
     /// any sort of http related error.
     async fn check(&self) -> Result<HttpResult, Error> {
@@ -224,6 +246,7 @@ impl Http {
     }
 }
 
+#[derive(Debug, strum_macros::Display)]
 pub enum HttpResult {
     Response {
         resp: reqwest::Response,
@@ -256,6 +279,12 @@ impl Ping {
     }
 
     #[instrument(skip_all, fields(kind="ping", name = self.name))]
+    async fn run(&self) -> Result<(), Error> {
+        let ping_res = self.check().await?;
+        tracing::info!("ping res: {ping_res}");
+        Ok(())
+    }
+
     async fn check(&self) -> Result<PingResult, Error> {
         let opts = PingOptions {
             ttl: 128,
@@ -285,6 +314,7 @@ impl Ping {
     }
 }
 
+#[derive(Debug, strum_macros::Display)]
 pub enum PingResult {
     Reply { reply: PingReply, latency: Duration },
     Error { err: PingError, latency: Duration },
