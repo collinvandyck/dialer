@@ -8,6 +8,7 @@ async-trait = "0.1.82"
 chrono = "0.4.38"
 clap = { version = "4.5.16", features = ["derive"] }
 color-eyre = "0.6.3"
+dns-lookup = "2.0.4"
 eyre = "0.6.12"
 humantime-serde = "1.1.1"
 ping-rs = "0.1.2"
