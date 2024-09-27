@@ -65,6 +65,39 @@ impl Db {
         .unwrap_or_else(|err| Err(Error::JoinError(err)))
     }
 
+    pub async fn materialize(&self, name: &str, kind: &check::Kind) -> Result<u64, Error> {
+        let db = self.clone();
+        let name = name.to_string();
+        let kind = kind.as_str();
+        task::spawn_blocking(move || {
+            let conn = db.pool.get().map_err(Error::GetConn)?;
+            let id = conn
+                .query_row(
+                    "select id from checks where name=?1 and kind=?2",
+                    (&name, kind),
+                    |row| {
+                        let id: u64 = row.get(0)?;
+                        Ok(id)
+                    },
+                )
+                .optional()?;
+            let id = match id {
+                Some(id) => id,
+                None => conn.query_row(
+                    "insert into checks (name, kind) values (?1, ?2) returning id",
+                    (&name, kind),
+                    |row| {
+                        let id: u64 = row.get(0)?;
+                        Ok(id)
+                    },
+                )?,
+            };
+            Ok(id)
+        })
+        .await
+        .unwrap_or_else(|err| Err(Error::JoinError(err)))
+    }
+
     pub async fn ensure_check<C>(&self, check: &C) -> Result<DbCheck<C>, Error>
     where
         C: Check + 'static,
