@@ -1,5 +1,5 @@
-dev:
-    cargo run
+loop:
+    watchexec -r -- sh -c "'rm -f checks.db* && cargo run --bin local'"
 
 clean:
     rm -f checks.db

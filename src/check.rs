@@ -37,6 +37,8 @@ pub enum Error {
 pub struct Checker {
     db: crate::db::Db,
     config: crate::config::Config,
+    https: Vec<Http>,
+    pings: Vec<Ping>,
 }
 
 impl Checker {
@@ -57,20 +59,22 @@ impl Checker {
         Ok(Self {
             db,
             config: config.clone(),
+            https,
+            pings,
         })
     }
 
     pub async fn run(&self) -> Result<(), Error> {
         loop {
             let now = Instant::now();
-            self.clone().run_once().await?;
+            self.run_once().await?;
             let sleep = self.config.interval.saturating_sub(now.elapsed());
             tokio::time::sleep(sleep).await;
-            tracing::info!("hi");
         }
     }
 
     async fn run_once(&self) -> Result<(), Error> {
+        tracing::info!("Running once.");
         Ok(())
     }
 }
