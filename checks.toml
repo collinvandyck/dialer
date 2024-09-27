@@ -1,4 +1,4 @@
-interval = "10s"
+interval = "5s"
 db_path = "checks.db"
 
 [ping]

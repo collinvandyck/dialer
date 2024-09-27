@@ -301,6 +301,7 @@ impl Ping {
         Ok(())
     }
 
+    #[instrument(skip_all)]
     async fn check(&self) -> Result<PingResult, Error> {
         let ping = self.clone();
         tokio::task::spawn_blocking(move || {
@@ -330,13 +331,14 @@ impl Ping {
             // todo: better timeout
             let timeout = Duration::from_secs(5);
             // todo: what should the ping data be
-            let data = [1];
+            let data = [1, 2, 3, 4];
             let start = Instant::now();
             let opts = PingOptions {
                 ttl: 128,
                 dont_fragment: true,
             };
-            ping_rs::send_ping(&addr, timeout, &data, Some(&opts))
+            tracing::info!("Sending ping to {addr}");
+            ping_rs::send_ping(&addr, timeout, &[], Some(&opts))
                 .map(|reply| PingResult::Reply {
                     reply,
                     latency: start.elapsed(),
