@@ -65,7 +65,7 @@ impl Db {
         .unwrap_or_else(|err| Err(Error::JoinError(err)))
     }
 
-    pub async fn materialize(&self, name: &str, kind: &check::Kind) -> Result<u64, Error> {
+    pub async fn materialize(&self, name: &str, kind: check::Kind) -> Result<u64, Error> {
         let db = self.clone();
         let name = name.to_string();
         let kind = kind.as_str();
@@ -93,34 +93,6 @@ impl Db {
                 )?,
             };
             Ok(id)
-        })
-        .await
-        .unwrap_or_else(|err| Err(Error::JoinError(err)))
-    }
-
-    pub async fn ensure_check<C>(&self, check: &C) -> Result<DbCheck<C>, Error>
-    where
-        C: Check + 'static,
-    {
-        let db = self.clone();
-        let check = check.clone();
-        task::spawn_blocking(move || {
-            let conn = db.pool.get().map_err(Error::GetConn)?;
-            let name = check.name();
-            let kind = check.kind().as_str();
-            conn.query_row(
-                "select id from checks where name=?1 and kind=?2",
-                (&name, kind),
-                |row| Ok(DbCheck::from_id_row(&check, row)),
-            )
-            .optional()?
-            .unwrap_or_else(|| {
-                conn.query_row(
-                    "insert into checks (name, kind) values (?1, ?2) returning id",
-                    (&name, kind),
-                    |row| Ok(DbCheck::from_id_row(&check, row)),
-                )?
-            })
         })
         .await
         .unwrap_or_else(|err| Err(Error::JoinError(err)))
@@ -241,6 +213,7 @@ mod migrate {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use check::Kind;
     use rusqlite::Connection;
 
     #[test]
@@ -250,17 +223,19 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn ensure() {
+    async fn materialize() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.as_ref().join("test.db");
         let db = Db::connect(&path).await.unwrap();
-        let check = check::Ping {
-            name: String::from("ping-name"),
-            host: String::from("ping-host"),
-        };
-        let dbcheck = db.ensure_check(&check).await.unwrap();
-        assert_eq!(dbcheck, DbCheck::new(&check, 1));
-        let dbcheck = db.ensure_check(&check).await.unwrap();
-        assert_eq!(dbcheck, DbCheck::new(&check, 1));
+        let id = db.materialize("foo", Kind::Ping).await.unwrap();
+        assert_eq!(id, 1);
+        let id = db.materialize("foo", Kind::Ping).await.unwrap();
+        assert_eq!(id, 1);
+        let id = db.materialize("bar", Kind::Ping).await.unwrap();
+        assert_eq!(id, 2);
+        let id = db.materialize("baz", Kind::Http).await.unwrap();
+        assert_eq!(id, 3);
+        let id = db.materialize("baz", Kind::Http).await.unwrap();
+        assert_eq!(id, 3);
     }
 }

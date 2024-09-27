@@ -10,7 +10,7 @@ use reqwest::Method;
 use tokio::task::spawn_blocking;
 use tracing::{info, instrument};
 
-use crate::config;
+use crate::{config, db};
 
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
@@ -31,6 +31,9 @@ pub enum Error {
 
     #[error("could not persist check: {0}")]
     EnsureCheck(#[source] crate::db::Error),
+
+    #[error("could not materialize check: {0}")]
+    Materialize(#[source] crate::db::Error),
 }
 
 #[derive(Clone)]
@@ -46,16 +49,16 @@ impl Checker {
         let db = crate::db::Db::connect(&config.db_path)
             .await
             .map_err(Error::DbConnect)?;
-        let https = config
-            .http
-            .iter()
-            .map(Http::try_from)
-            .collect::<Result<Vec<_>, Error>>()?;
-        let pings = config
-            .ping
-            .iter()
-            .map(Ping::try_from)
-            .collect::<Result<Vec<_>, Error>>()?;
+        let mut https = vec![];
+        for (name, http) in &config.http {
+            let http = Http::build(name, http, &db).await?;
+            https.push(http);
+        }
+        let mut pings = vec![];
+        for (name, ping) in &config.ping {
+            let ping = Ping::build(name, ping, &db).await?;
+            pings.push(ping);
+        }
         Ok(Self {
             db,
             config: config.clone(),
@@ -123,27 +126,21 @@ pub struct Opts {}
 
 #[derive(Debug, Clone)]
 pub struct Http {
+    id: u64,
     name: String,
     url: reqwest::Url,
     code: Option<u32>,
 }
 
-impl TryFrom<(&String, &config::Http)> for Http {
-    type Error = Error;
-    fn try_from((name, http): (&String, &config::Http)) -> Result<Self, Self::Error> {
-        let url = reqwest::Url::parse(&http.url).map_err(Error::ParseUrl)?;
-        Ok(Self {
-            name: name.to_string(),
-            url,
-            code: http.code.clone(),
-        })
-    }
-}
-
 impl Http {
-    fn from_config(name: &str, http: &config::Http) -> Result<Self, Error> {
+    async fn build(name: &str, http: &config::Http, db: &db::Db) -> Result<Self, Error> {
         let url = reqwest::Url::parse(&http.url).map_err(Error::ParseUrl)?;
+        let id = db
+            .materialize(name, Kind::Http)
+            .await
+            .map_err(Error::Materialize)?;
         Ok(Self {
+            id,
             name: name.to_string(),
             url,
             code: http.code.clone(),
@@ -191,23 +188,19 @@ pub enum HttpResult {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Ping {
+    pub id: u64,
     pub name: String,
     pub host: String,
 }
 
-impl TryFrom<(&String, &config::Ping)> for Ping {
-    type Error = Error;
-    fn try_from((name, ping): (&String, &config::Ping)) -> Result<Self, Self::Error> {
-        Ok(Self {
-            name: name.to_string(),
-            host: ping.host.clone(),
-        })
-    }
-}
-
 impl Ping {
-    fn from_config(name: &str, ping: &config::Ping) -> Result<Self, Error> {
+    async fn build(name: &str, ping: &config::Ping, db: &db::Db) -> Result<Self, Error> {
+        let id = db
+            .materialize(name, Kind::Ping)
+            .await
+            .map_err(Error::Materialize)?;
         Ok(Self {
+            id,
             name: name.to_string(),
             host: ping.host.clone(),
         })
