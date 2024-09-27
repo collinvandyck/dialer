@@ -95,14 +95,14 @@ impl Checker {
     pub async fn run(&self) -> Result<(), Error> {
         loop {
             let now = Instant::now();
-            self.run_once().await?;
+            let deadline = now + self.config.interval;
+            self.run_once(deadline).await?;
             let sleep = self.config.interval.saturating_sub(now.elapsed());
             tokio::time::sleep(sleep).await;
         }
     }
 
-    async fn run_once(&self) -> Result<(), Error> {
-        tracing::info!("Running once.");
+    async fn run_once(&self, deadline: Instant) -> Result<(), Error> {
         for check in &self.checks {
             let name = check.name();
             let kind = check.kind();
