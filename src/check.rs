@@ -12,7 +12,7 @@ use axum::{extract, routing};
 use futures::{Future, TryFutureExt};
 use reqwest::Method;
 use rusqlite::types::FromSql;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use tokio::{
     task::{spawn_blocking, JoinError, JoinSet},
     time::error::Elapsed,
@@ -82,6 +82,9 @@ enum ACheck {
 struct MetricsQuery {
     range: i32,
 }
+
+#[derive(Debug, Serialize)]
+struct Metrics {}
 
 impl Default for MetricsQuery {
     fn default() -> Self {
