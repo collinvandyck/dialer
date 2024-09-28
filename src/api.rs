@@ -1,6 +1,9 @@
 //! Defines types and helpers related to getting data out of the db
 
-use crate::check;
+use crate::{
+    check,
+    db::{self, record},
+};
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
@@ -25,11 +28,38 @@ pub struct Metrics {
     pub series: Vec<Series>,
 }
 
+impl Metrics {
+    pub fn get_mut(&mut self, name: &str, kind: check::Kind) -> &mut Series {
+        let pos = self.find_pos(name, kind);
+        let idx = match pos {
+            Some(idx) => idx,
+            None => {
+                let series = Series {
+                    kind,
+                    name: name.to_string(),
+                    values: vec![],
+                };
+                self.series.push(series);
+                self.series.len() - 1
+            }
+        };
+        &mut self.series[idx]
+    }
+
+    fn find_pos(&self, name: &str, kind: check::Kind) -> Option<usize> {
+        self.series
+            .iter()
+            .enumerate()
+            .find(|(idx, s)| s.name == name && s.kind == kind)
+            .map(|(idx, s)| idx)
+    }
+}
+
 #[derive(Debug, Serialize)]
 pub struct Series {
-    kind: check::Kind,
-    name: String,
-    values: Vec<TimeValue>,
+    pub kind: check::Kind,
+    pub name: String,
+    pub values: Vec<TimeValue>,
 }
 
 #[derive(Debug, Serialize)]

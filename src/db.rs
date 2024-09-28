@@ -32,6 +32,9 @@ pub enum Error {
         #[source]
         err: rusqlite::Error,
     },
+
+    #[error("{msg}")]
+    KindConversion { msg: String },
 }
 
 type DbPool = r2d2::Pool<SqliteConnectionManager>;
@@ -41,7 +44,7 @@ pub struct Db {
     pool: Arc<DbPool>,
 }
 
-mod record {
+pub mod record {
     // represents a record in the http_resp table
     #[derive(Debug)]
     pub struct Http {
@@ -64,12 +67,12 @@ mod record {
 
     #[derive(Debug)]
     pub struct Union {
-        name: String,
-        kind: String,
-        ts: String,
-        latency_ms: i32,
-        error: Option<String>,
-        error_kind: Option<String>,
+        pub name: String,
+        pub kind: String,
+        pub ts: String,
+        pub latency_ms: i32,
+        pub error: Option<String>,
+        pub error_kind: Option<String>,
     }
 
     impl<'conn> TryFrom<&rusqlite::Row<'conn>> for Http {
@@ -119,6 +122,24 @@ fn handle_panic<T>(err: JoinError) -> Result<T, Error> {
     Err(Error::BlockingThreadPanic(err))
 }
 
+impl TryFrom<Vec<record::Union>> for api::Metrics {
+    type Error = Error;
+    fn try_from(recs: Vec<record::Union>) -> Result<Self, Self::Error> {
+        let mut metrics = api::Metrics::default();
+        for rec in recs {
+            let name = rec.name;
+            let kind: check::Kind = rec
+                .kind
+                .as_str()
+                .try_into()
+                .map_err(|msg| Error::KindConversion { msg })?;
+            let series = metrics.get_mut(&name, kind);
+            // todo: populate series
+        }
+        Ok(metrics)
+    }
+}
+
 impl Db {
     pub async fn connect(path: &Path) -> Result<Self, Error> {
         let path = path.to_path_buf();
@@ -146,7 +167,8 @@ impl Db {
         let conn = self.conn()?;
         let mut stmt = conn
             .prepare_cached(
-                "select * from (
+                "
+                select * from (
                     select
                     check_name, 'http' as kind, ts, latency_ms, error, error_kind from http_resp
                     union
@@ -156,12 +178,10 @@ impl Db {
                 ",
             )
             .map_err(|err| Error::Prepare { err })?;
-        let res = stmt.query_map([], |row| record::Union::try_from(row))?;
-        let unions: Vec<record::Union> = res.collect::<Result<_, _>>()?;
-        for rec in unions {
-            tracing::info!("union: {rec:#?}");
-        }
-        Ok(api::Metrics::default())
+        let recs = stmt
+            .query_map([], |row| record::Union::try_from(row))?
+            .collect::<Result<Vec<_>, _>>()?;
+        recs.try_into()
     }
 
     // ensures that the check has a record in the db with an id. not used at the moment but i

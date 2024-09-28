@@ -217,10 +217,21 @@ impl Checker {
     }
 }
 
-#[derive(Clone, Copy, Debug, Serialize)]
+#[derive(Clone, Copy, Debug, Serialize, PartialEq, Eq)]
 pub enum Kind {
     Http,
     Ping,
+}
+
+impl TryFrom<&str> for Kind {
+    type Error = String;
+    fn try_from(kind: &str) -> Result<Self, Self::Error> {
+        match kind {
+            "http" => Ok(Self::Http),
+            "ping" => Ok(Self::Ping),
+            _ => Err(format!("unknown kind: '{kind}'")),
+        }
+    }
 }
 
 impl Display for Kind {
