@@ -6,11 +6,17 @@ use std::time::Duration;
 
 #[derive(Debug, Deserialize)]
 #[serde(default)]
-pub struct Query {}
+pub struct Query {
+    start_time: Option<chrono::DateTime<chrono::Utc>>,
+    end_time: Option<chrono::DateTime<chrono::Utc>>,
+}
 
 impl Default for Query {
     fn default() -> Self {
-        Self {}
+        Self {
+            start_time: None,
+            end_time: None,
+        }
     }
 }
 
