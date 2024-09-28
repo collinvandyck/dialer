@@ -31,6 +31,18 @@ pub enum Error {
 
     #[error("could not materialize check: {0}")]
     Materialize(#[source] crate::db::Error),
+
+    #[error("task panicked: {0}")]
+    UnexpectedPanic(#[source] JoinError),
+
+    #[error("http or checker quit unexpectedly")]
+    UnexpectedQuit,
+
+    #[error("http quit unexpectedly")]
+    HttpQuit,
+
+    #[error("axum failure: {0}")]
+    Axum(#[source] io::Error),
 }
 
 pub async fn run(config: &config::Config) -> Result<(), Error> {
@@ -103,15 +115,47 @@ impl Checker {
 
     #[instrument(skip_all)]
     pub async fn run(&self) -> Result<(), Error> {
+        let mut tasks = JoinSet::default();
+        {
+            let checker = self.clone();
+            tasks.spawn(async move { checker.listen().await });
+        }
+        {
+            let checker = self.clone();
+            tasks.spawn(async move { checker.check_loop().await });
+        }
+        while let Some(res) = tasks.join_next().await {
+            return match res.map_err(Error::UnexpectedPanic)? {
+                Ok(_) => Err(Error::UnexpectedQuit),
+                err @ Err(_) => err,
+            };
+        }
+        Ok(())
+    }
+
+    async fn listen(&self) -> Result<(), Error> {
+        let app = axum::Router::new().route("/", axum::routing::get(|| async { "Hello, World!" }));
+        tracing::info!("Starting http listener on {}", self.config.listen);
+        let listener = tokio::net::TcpListener::bind(&self.config.listen)
+            .await
+            .unwrap();
+        axum::serve(listener, app)
+            .await
+            .map_err(Error::Axum)
+            .or(Err(Error::HttpQuit))
+    }
+
+    async fn check_loop(&self) -> Result<(), Error> {
         loop {
             let now = Instant::now();
-            self.run_once().await?;
+            self.check().await?;
             let sleep = self.config.interval.saturating_sub(now.elapsed());
             tokio::time::sleep(sleep).await;
         }
     }
 
-    async fn run_once(&self) -> Result<(), Error> {
+    /// runs all of the checks once.
+    async fn check(&self) -> Result<(), Error> {
         let mut tasks = JoinSet::default();
         tracing::info!("Spawning {} checks...", self.checks.len());
         for check in &self.checks {

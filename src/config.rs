@@ -19,7 +19,7 @@ pub struct Config {
 }
 
 fn default_listen() -> String {
-    String::from(":80")
+    String::from("0.0.0.0:3000")
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
