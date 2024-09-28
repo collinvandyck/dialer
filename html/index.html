@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Time Series Visualization</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.8.5/d3.min.js"></script>
+    <style>
+        body { font-family: Arial, sans-serif; }
+        .line { fill: none; stroke-width: 2px; }
+        .axis-label { font-size: 12px; }
+    </style>
+</head>
+<body>
+    <h1>Time Series</h1>
+
+    <script src="https://unpkg.com/htmx.org@2.0.2"></script>
+    <!-- have a button POST a click via AJAX -->
+    <button hx-post="/clicked" hx-swap="outerHTML">
+    Click Me
+    </button>
+
+    <div id="chart"></div>
+
+    <script>
+        // Fetch data from the /query endpoint
+        fetch('/query')
+            .then(response => response.json())
+            .then(data => {
+                const margin = {top: 20, right: 20, bottom: 30, left: 50};
+                const width = 960 - margin.left - margin.right;
+                const height = 500 - margin.top - margin.bottom;
+
+                const svg = d3.select("#chart")
+                    .append("svg")
+                        .attr("width", width + margin.left + margin.right)
+                        .attr("height", height + margin.top + margin.bottom)
+                    .append("g")
+                        .attr("transform", `translate(${margin.left},${margin.top})`);
+
+                // Process the data
+                const allValues = data.series.flatMap(s => s.values);
+                const timeExtent = d3.extent(allValues, d => new Date(d.ts));
+                const msExtent = d3.extent(allValues, d => d.ms);
+
+                // Create scales
+                const xScale = d3.scaleTime()
+                    .domain(timeExtent)
+                    .range([0, width]);
+
+                const yScale = d3.scaleLinear()
+                    .domain([0, msExtent[1]])
+                    .range([height, 0]);
+
+                // Create axes
+                const xAxis = d3.axisBottom(xScale);
+                const yAxis = d3.axisLeft(yScale);
+
+                svg.append("g")
+                    .attr("transform", `translate(0,${height})`)
+                    .call(xAxis);
+
+                svg.append("g")
+                    .call(yAxis);
+
+                // Add axis labels
+                svg.append("text")
+                    .attr("class", "axis-label")
+                    .attr("text-anchor", "middle")
+                    .attr("x", width / 2)
+                    .attr("y", height + margin.bottom)
+                    .text("Time");
+
+                svg.append("text")
+                    .attr("class", "axis-label")
+                    .attr("text-anchor", "middle")
+                    .attr("transform", "rotate(-90)")
+                    .attr("y", -margin.left)
+                    .attr("x", -height / 2)
+                    .text("Response Time (ms)");
+
+                // Create line generator
+                const line = d3.line()
+                    .x(d => xScale(new Date(d.ts)))
+                    .y(d => yScale(d.ms));
+
+                // Create color scale
+                const colorScale = d3.scaleOrdinal(d3.schemeCategory10);
+
+                // Draw lines
+                data.series.forEach((series, i) => {
+                    svg.append("path")
+                        .datum(series.values)
+                        .attr("class", "line")
+                        .attr("d", line)
+                        .style("stroke", colorScale(i))
+                        .append("title")
+                        .text(`${series.name} (${series.kind})`);
+                });
+
+                // Add legend
+                const legend = svg.selectAll(".legend")
+                    .data(data.series)
+                    .enter().append("g")
+                    .attr("class", "legend")
+                    .attr("transform", (d, i) => `translate(0,${i * 20})`);
+
+                legend.append("rect")
+                    .attr("x", width - 18)
+                    .attr("width", 18)
+                    .attr("height", 18)
+                    .style("fill", (d, i) => colorScale(i));
+
+                legend.append("text")
+                    .attr("x", width - 24)
+                    .attr("y", 9)
+                    .attr("dy", ".35em")
+                    .style("text-anchor", "end")
+                    .text(d => `${d.name} (${d.kind})`);
+            })
+            .catch(error => console.error('Error fetching data:', error));
+    </script>
+</body>
+</html>
+

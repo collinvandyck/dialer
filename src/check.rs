@@ -8,7 +8,11 @@ use std::{
 };
 
 use async_trait::async_trait;
-use axum::{extract, response::IntoResponse, routing};
+use axum::{
+    extract,
+    response::{self, IntoResponse},
+    routing,
+};
 use futures::{Future, TryFutureExt};
 use reqwest::{Method, StatusCode};
 use rusqlite::types::FromSql;
@@ -159,8 +163,6 @@ impl Checker {
     async fn listen(&self) -> Result<(), Error> {
         tracing::info!("Starting http listener on {}", self.config.listen);
         let app = axum::Router::new();
-        let app = app.route("/", routing::get(|| async { "Hello, World." }));
-        let app = app.route("/foo", routing::get(|| async { "bar" }));
         let data = self.clone();
         let app = app.route(
             "/query",
@@ -170,6 +172,7 @@ impl Checker {
                 },
             ),
         );
+        let app = app.nest_service("/", tower_http::services::ServeDir::new("html"));
         let listener = tokio::net::TcpListener::bind(&self.config.listen)
             .await
             .map_err(Error::BindHttp)?;
