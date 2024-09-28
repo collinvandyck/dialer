@@ -61,19 +61,13 @@ pub async fn run(config: &config::Config) -> Result<(), Error> {
 pub struct Checker {
     db: crate::db::Db,
     config: crate::config::Config,
-    checks: Vec<ACheck>,
+    checks: Vec<Check>,
 }
 
 #[derive(Clone)]
 struct Context {
     timeout: Duration,
     db: db::Db,
-}
-
-#[derive(Debug, Clone)]
-enum ACheck {
-    Http(Http),
-    Ping(Ping),
 }
 
 /// for fetching metrics from the sqlite db.
@@ -92,24 +86,30 @@ impl Default for MetricsQuery {
     }
 }
 
-impl ACheck {
+#[derive(Debug, Clone)]
+enum Check {
+    Http(Http),
+    Ping(Ping),
+}
+
+impl Check {
     fn name(&self) -> &str {
         match self {
-            ACheck::Http(c) => &c.name,
-            ACheck::Ping(c) => &c.name,
+            Check::Http(c) => &c.name,
+            Check::Ping(c) => &c.name,
         }
     }
     fn kind(&self) -> Kind {
         match self {
-            ACheck::Http(_) => Kind::Http,
-            ACheck::Ping(_) => Kind::Ping,
+            Check::Http(_) => Kind::Http,
+            Check::Ping(_) => Kind::Ping,
         }
     }
 
     async fn check(&self, ctx: Context) {
         match self {
-            ACheck::Http(http) => http.check(ctx).await,
-            ACheck::Ping(ping) => ping.check(ctx).await,
+            Check::Http(http) => http.check(ctx).await,
+            Check::Ping(ping) => ping.check(ctx).await,
         }
     }
 }
@@ -122,11 +122,11 @@ impl Checker {
         let mut checks = vec![];
         for (name, http) in &config.http {
             let http = Http::build(name, http, &db).await?;
-            checks.push(ACheck::Http(http));
+            checks.push(Check::Http(http));
         }
         for (name, ping) in &config.ping {
             let ping = Ping::build(name, ping, &db).await?;
-            checks.push(ACheck::Ping(ping));
+            checks.push(Check::Ping(ping));
         }
         Ok(Self {
             db,
