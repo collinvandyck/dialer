@@ -216,7 +216,7 @@ impl Checker {
     }
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Serialize)]
 pub enum Kind {
     Http,
     Ping,

@@ -6,7 +6,7 @@ edition = "2021"
 [dependencies]
 async-trait = "0.1.82"
 axum = "0.7.7"
-chrono = "0.4.38"
+chrono = { version = "0.4.38", features = ["serde"] }
 clap = { version = "4.5.16", features = ["derive"] }
 color-eyre = "0.6.3"
 dns-lookup = "2.0.4"

@@ -49,9 +49,7 @@ impl Db {
     }
 
     pub async fn query(&self, query: api::Query) -> Result<api::Metrics, Error> {
-        Ok(api::Metrics {
-            nums: vec![1, 2, 3, 4],
-        })
+        Ok(api::Metrics::default())
     }
 
     pub async fn materialize(&self, name: &str, kind: check::Kind) -> Result<u64, Error> {
