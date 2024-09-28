@@ -3,13 +3,16 @@ use std::{
     fmt::Display,
     io,
     net::{AddrParseError, IpAddr},
+    process::Output,
     time::{Duration, Instant},
 };
 
 use async_trait::async_trait;
-use futures::TryFutureExt;
+use axum::{extract, routing};
+use futures::{Future, TryFutureExt};
 use reqwest::Method;
 use rusqlite::types::FromSql;
+use serde::Deserialize;
 use tokio::{
     task::{spawn_blocking, JoinError, JoinSet},
     time::error::Elapsed,
@@ -71,6 +74,19 @@ struct Context {
 enum ACheck {
     Http(Http),
     Ping(Ping),
+}
+
+/// for fetching metrics from the sqlite db.
+#[derive(Debug, Deserialize)]
+#[serde(default)]
+struct MetricsQuery {
+    range: i32,
+}
+
+impl Default for MetricsQuery {
+    fn default() -> Self {
+        MetricsQuery { range: 42 }
+    }
 }
 
 impl ACheck {
@@ -136,8 +152,19 @@ impl Checker {
     }
 
     async fn listen(&self) -> Result<(), Error> {
-        let app = axum::Router::new().route("/", axum::routing::get(|| async { "Hello, World!" }));
         tracing::info!("Starting http listener on {}", self.config.listen);
+        let app = axum::Router::new();
+        let app = app.route("/", routing::get(|| async { "Hello, World." }));
+        let app = app.route("/foo", routing::get(|| async { "bar" }));
+        let data = self.clone();
+        let app = app.route(
+            "/query",
+            routing::get(
+                |extract::Query(query): extract::Query<MetricsQuery>| async move {
+                    data.query(query).await
+                },
+            ),
+        );
         let listener = tokio::net::TcpListener::bind(&self.config.listen)
             .await
             .map_err(Error::BindHttp)?;
@@ -145,6 +172,11 @@ impl Checker {
             .await
             .map_err(Error::Axum)
             .or(Err(Error::HttpQuit))
+    }
+
+    // fetches data from the sqlite db according to request
+    async fn query(&self, query: MetricsQuery) -> String {
+        format!("{query:#?}")
     }
 
     async fn check_loop(&self) -> Result<(), Error> {
