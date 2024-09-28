@@ -1,4 +1,4 @@
-use crate::check::{self, Check};
+use crate::check::{self};
 use eyre::Context;
 use r2d2::PooledConnection;
 use r2d2_sqlite::SqliteConnectionManager;
@@ -29,26 +29,6 @@ type DbPool = r2d2::Pool<SqliteConnectionManager>;
 #[derive(Clone, Debug)]
 pub struct Db {
     pool: Arc<DbPool>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct DbCheck<Check> {
-    check: Check,
-    id: u64,
-}
-
-impl<C: Check> DbCheck<C> {
-    fn new(check: &C, id: u64) -> Self {
-        Self {
-            check: check.clone(),
-            id,
-        }
-    }
-
-    fn from_id_row(check: &C, row: &rusqlite::Row) -> Result<Self, Error> {
-        let id = row.get(0)?;
-        Ok(Self::new(check, id))
-    }
 }
 
 impl Db {
@@ -106,9 +86,9 @@ impl Db {
         let db = self.clone();
         match res {
             Ok(check::HttpResult { resp, latency }) => {
-                let name = check.name();
                 let code = resp.status().as_u16();
                 let latency = latency.as_millis() as i64;
+                let name = check.name.clone();
                 task::spawn_blocking(move || {
                     let conn = db.pool.get().map_err(Error::GetConn)?;
                     conn.execute(
@@ -129,8 +109,8 @@ impl Db {
                     check::HttpError::TaskTimeout(_) => "task_timeout",
                     check::HttpError::Error { err, latency } => "call",
                 };
-                let name = check.name();
                 let err = err.to_string();
+                let name = check.name.clone();
                 task::spawn_blocking(move || {
                     let conn = db.pool.get().map_err(Error::GetConn)?;
                     conn.execute(
@@ -156,7 +136,7 @@ impl Db {
         let db = self.clone();
         match res {
             Ok(check::PingResult { packet, latency }) => {
-                let name = check.name();
+                let name = check.name.clone();
                 let latency = latency.as_millis() as i64;
                 task::spawn_blocking(move || {
                     let conn = db.pool.get().map_err(Error::GetConn)?;
@@ -170,7 +150,7 @@ impl Db {
                 .unwrap_or_else(|err| Err(Error::JoinError(err)))?;
             }
             Err(err) => {
-                let name = check.name();
+                let name = check.name.clone();
                 let kind = match &err {
                     check::PingError::ResolveHost { .. } => "resolve_host",
                     check::PingError::NoIpForHost { .. } => "no_ip_for_host",

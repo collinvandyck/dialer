@@ -156,39 +156,12 @@ impl Kind {
     }
 }
 
-pub trait Check: Clone + Send + Sync {
-    fn name(&self) -> String;
-    fn kind(&self) -> Kind;
-}
-
-impl Check for Http {
-    fn name(&self) -> String {
-        self.name.clone()
-    }
-
-    fn kind(&self) -> Kind {
-        Kind::Http
-    }
-}
-
-impl Check for Ping {
-    fn name(&self) -> String {
-        self.name.clone()
-    }
-
-    fn kind(&self) -> Kind {
-        Kind::Ping
-    }
-}
-
-pub struct Opts {}
-
 #[derive(Debug, Clone)]
 pub struct Http {
-    id: u64,
-    name: String,
-    url: reqwest::Url,
-    code: Option<u32>,
+    pub id: u64,
+    pub name: String,
+    pub url: reqwest::Url,
+    pub code: Option<u32>,
 }
 
 #[derive(Debug, thiserror::Error)]
