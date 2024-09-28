@@ -12,8 +12,14 @@ pub struct Config {
     pub db_path: PathBuf,
     #[serde(with = "humantime_serde")]
     pub interval: Duration,
+    #[serde(default = "default_listen")]
+    pub listen: String,
     pub ping: HashMap<String, Ping>,
     pub http: HashMap<String, Http>,
+}
+
+fn default_listen() -> String {
+    String::from(":80")
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -61,6 +67,7 @@ mod tests {
         let config = r#"
             db_path = "checks.db"
             interval = "1s"
+            listen = ":3000"
 
             [ping]
             google = { host = "google.com" }
@@ -78,6 +85,7 @@ mod tests {
             Config {
                 db_path: PathBuf::from("checks.db"),
                 interval: Duration::from_secs(1),
+                listen: String::from(":3000"),
                 ping: HashMap::from([
                     (
                         String::from("google"),
@@ -122,6 +130,7 @@ mod tests {
             Config {
                 db_path: PathBuf::from("checks.db"),
                 interval: Duration::from_secs(1),
+                listen: default_listen(),
                 ping: HashMap::from([
                     (
                         String::from("google"),
