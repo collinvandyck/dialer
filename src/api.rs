@@ -64,12 +64,16 @@ pub struct Series {
 
 #[derive(Debug, Serialize)]
 pub struct TimeValue {
-    epoch: chrono::DateTime<chrono::Utc>,
-    value: Value,
+    pub ts: chrono::DateTime<chrono::Utc>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "ms")]
+    pub latency_ms: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub err: Option<Error>,
 }
 
 #[derive(Debug, Serialize)]
-pub enum Value {
-    Ok { latency: Duration },
-    Err { err: String, kind: String },
+pub struct Error {
+    pub msg: String,
+    pub kind: String,
 }

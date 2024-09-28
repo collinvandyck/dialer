@@ -13,7 +13,7 @@ create table results (
 create table http_resp (
     id integer primary key autoincrement,
     check_name text not null,
-    ts timestamp default current_timestamp,
+    ts text default (datetime('now', 'utc')),
     latency_ms integer not null,
     code integer,
     error text,
@@ -24,7 +24,7 @@ create index idx_http_resp_ts on http_resp(ts);
 create table ping_resp (
     id integer primary key autoincrement,
     check_name text not null,
-    ts timestamp default current_timestamp,
+    ts text default (datetime('now', 'utc')),
     latency_ms integer not null,
     error text,
     error_kind text

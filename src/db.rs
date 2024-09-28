@@ -1,7 +1,8 @@
 use crate::{
-    api,
+    api::{self, TimeValue},
     check::{self},
 };
+use chrono::TimeZone;
 use eyre::Context;
 use r2d2::PooledConnection;
 use r2d2_sqlite::SqliteConnectionManager;
@@ -35,6 +36,12 @@ pub enum Error {
 
     #[error("{msg}")]
     KindConversion { msg: String },
+
+    #[error("could not parse datetime: {err}")]
+    ParseDateTime {
+        #[source]
+        err: chrono::format::ParseError,
+    },
 }
 
 type DbPool = r2d2::Pool<SqliteConnectionManager>;
@@ -122,19 +129,43 @@ fn handle_panic<T>(err: JoinError) -> Result<T, Error> {
     Err(Error::BlockingThreadPanic(err))
 }
 
+impl TryFrom<record::Union> for TimeValue {
+    type Error = Error;
+    fn try_from(rec: record::Union) -> Result<Self, Self::Error> {
+        let ts = chrono::NaiveDateTime::parse_from_str(&rec.ts, "%Y-%m-%d %H:%M:%S")
+            .map_err(|err| Error::ParseDateTime { err })?
+            .and_utc();
+        let tv = match &rec.error {
+            None => api::TimeValue {
+                ts,
+                latency_ms: Some(rec.latency_ms),
+                err: None,
+            },
+            Some(msg) => api::TimeValue {
+                ts,
+                latency_ms: None,
+                err: Some(api::Error {
+                    msg: msg.clone(),
+                    kind: rec.error_kind.unwrap_or_default(),
+                }),
+            },
+        };
+        Ok(tv)
+    }
+}
+
 impl TryFrom<Vec<record::Union>> for api::Metrics {
     type Error = Error;
     fn try_from(recs: Vec<record::Union>) -> Result<Self, Self::Error> {
         let mut metrics = api::Metrics::default();
         for rec in recs {
-            let name = rec.name;
             let kind: check::Kind = rec
                 .kind
                 .as_str()
                 .try_into()
                 .map_err(|msg| Error::KindConversion { msg })?;
-            let series = metrics.get_mut(&name, kind);
-            // todo: populate series
+            let series = metrics.get_mut(&rec.name, kind);
+            series.values.push(rec.try_into()?);
         }
         Ok(metrics)
     }
