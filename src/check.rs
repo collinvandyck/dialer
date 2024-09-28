@@ -57,11 +57,11 @@ pub enum ApiError {
     Error(#[from] Error),
 }
 
+// in general we'll mostly just return a 500 to the client.
+// todo: should we log here?
 impl axum::response::IntoResponse for ApiError {
     fn into_response(self) -> axum::response::Response {
-        match self {
-            ApiError::Error(_) => (StatusCode::INTERNAL_SERVER_ERROR, "").into_response(),
-        }
+        (StatusCode::INTERNAL_SERVER_ERROR, "").into_response()
     }
 }
 
@@ -196,7 +196,7 @@ impl Checker {
     // fetches data from the sqlite db according to request
     async fn query(&self, query: MetricsQuery) -> Result<axum::Json<Metrics>, ApiError> {
         let metrics = Metrics {
-            nums: vec![1, 2, 3, 4, 5],
+            nums: vec![1, 2, 3, 4, 5, 6, 7],
         };
         let resp = axum::Json(metrics);
         Ok(resp)
