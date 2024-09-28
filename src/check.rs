@@ -64,6 +64,7 @@ pub enum ApiError {
 // todo: should we log here?
 impl axum::response::IntoResponse for ApiError {
     fn into_response(self) -> axum::response::Response {
+        tracing::error!("err: {self}");
         (StatusCode::INTERNAL_SERVER_ERROR, "").into_response()
     }
 }

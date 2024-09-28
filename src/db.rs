@@ -6,7 +6,7 @@ use eyre::Context;
 use r2d2::PooledConnection;
 use r2d2_sqlite::SqliteConnectionManager;
 use rusqlite::{Connection, OptionalExtension};
-use std::{path::Path, sync::Arc};
+use std::{path::Path, sync::Arc, time::Duration};
 use tokio::task::{self, JoinError};
 use tracing::instrument;
 
@@ -26,6 +26,12 @@ pub enum Error {
 
     #[error("could not get conn: {0}")]
     GetConn(#[source] r2d2::Error),
+
+    #[error("prepare stmt: {err}")]
+    Prepare {
+        #[source]
+        err: rusqlite::Error,
+    },
 }
 
 type DbPool = r2d2::Pool<SqliteConnectionManager>;
@@ -35,7 +41,50 @@ pub struct Db {
     pool: Arc<DbPool>,
 }
 
+mod record {
+    // represents a record in the http_resp table
+    #[derive(Debug)]
+    pub struct Http {
+        name: String,
+        ts: String,
+        latency_ms: i32,
+        code: Option<u32>,
+        error: Option<String>,
+        error_kind: Option<String>,
+    }
+
+    impl<'conn> TryFrom<&rusqlite::Row<'conn>> for Http {
+        type Error = rusqlite::Error;
+        fn try_from(row: &rusqlite::Row) -> Result<Self, Self::Error> {
+            Ok(Self {
+                name: row.get("check_name")?,
+                ts: row.get("ts")?,
+                latency_ms: row.get("latency_ms")?,
+                code: row.get("code")?,
+                error: row.get("error")?,
+                error_kind: row.get("error_kind")?,
+            })
+        }
+    }
+}
+
 impl Db {
+    #[instrument(skip_all)]
+    fn query_sync(&self, query: api::Query) -> Result<api::Metrics, Error> {
+        tracing::info!("Querying for metrics data");
+        let conn = self.conn()?;
+        let mut stmt = conn
+            .prepare_cached("select * from http_resp")
+            .map_err(|err| Error::Prepare { err })?;
+        let kind = check::Kind::Http;
+        let res = stmt.query_map([], |row| record::Http::try_from(row))?;
+        let http: Vec<record::Http> = res.collect::<Result<_, _>>()?;
+        for rec in http {
+            tracing::info!("http: {rec:#?}");
+        }
+        Ok(api::Metrics::default())
+    }
+
     pub async fn connect(path: &Path) -> Result<Self, Error> {
         let path = path.to_path_buf();
         task::spawn_blocking(move || {
@@ -51,22 +100,10 @@ impl Db {
 
     pub async fn query(&self, query: api::Query) -> Result<api::Metrics, Error> {
         let db = self.clone();
-        // todo: any async logic before delegating to blocking threadpol.
-        task::spawn_blocking(move || {
-            // delegate to sync method.
-            db.query_sync(query)
-        })
-        .await
-        .unwrap_or_else(|err| Err(Error::JoinError(err)))
+        task::spawn_blocking(move || db.query_sync(query))
+            .await
+            .unwrap_or_else(|err| Err(Error::JoinError(err)))
     }
-
-    #[instrument(skip_all)]
-    fn query_sync(&self, query: api::Query) -> Result<api::Metrics, Error> {
-        tracing::info!("Querying for metrics data");
-        let conn = self.conn()?;
-        Ok(api::Metrics::default())
-    }
-
     pub async fn materialize(&self, name: &str, kind: check::Kind) -> Result<u64, Error> {
         let db = self.clone();
         let name = name.to_string();
@@ -191,6 +228,7 @@ impl Db {
         Ok(())
     }
 
+    /// fetch a new conn from the underlying pool
     fn conn(&self) -> Result<PooledConnection<SqliteConnectionManager>, Error> {
         self.pool.get().map_err(Error::GetConn)
     }
