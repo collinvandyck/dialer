@@ -147,7 +147,6 @@ impl Db {
 
     #[instrument(skip_all)]
     fn query_sync(&self, query: api::Query) -> Result<api::Metrics, Error> {
-        tracing::info!("Querying for metrics data");
         let conn = self.conn()?;
         let mut stmt = conn
             .prepare_cached(

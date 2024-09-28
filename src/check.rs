@@ -198,7 +198,6 @@ impl Checker {
     /// runs all of the checks once.
     async fn check(&self) -> Result<(), Error> {
         let mut tasks = JoinSet::default();
-        tracing::info!("Spawning {} checks...", self.checks.len());
         for check in &self.checks {
             let check = check.clone();
             let ctx = Context {
@@ -212,7 +211,6 @@ impl Checker {
                 tracing::error!("check task panicked: {join_err}")
             }
         }
-        tracing::info!("{} checks completed.", self.checks.len());
         Ok(())
     }
 }
