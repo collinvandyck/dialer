@@ -148,10 +148,14 @@ impl Db {
         }
     }
 
-    async fn record_ping(&self, check: &check::Ping, res: check::PingResult) -> Result<(), Error> {
+    async fn record_ping(
+        &self,
+        check: &check::Ping,
+        res: Result<check::PingResult, check::PingError>,
+    ) -> Result<(), Error> {
         let db = self.clone();
         match res {
-            check::PingResult::Reply { reply, latency } => {
+            Ok(check::PingResult { packet, latency }) => {
                 let name = check.name();
                 let latency = latency.as_millis() as i64;
                 task::spawn_blocking(move || {
@@ -163,24 +167,16 @@ impl Db {
                     Ok(())
                 })
                 .await
-                .unwrap_or_else(|err| Err(Error::JoinError(err)))
+                .unwrap_or_else(|err| Err(Error::JoinError(err)))?;
             }
-            check::PingResult::Error { err, latency } => {
+            Err(err) => {
                 let name = check.name();
-                let (kind, err) = match err {
-                    ping_rs::PingError::BadParameter(msg) => {
-                        ("bad_param", format!("bad param: {msg}"))
-                    }
-                    ping_rs::PingError::OsError(code, msg) => {
-                        ("os_error", format!("os: code: {code} msg: {msg}"))
-                    }
-                    ping_rs::PingError::IpError(status) => ("ip", status.to_string()),
-                    ping_rs::PingError::TimedOut => ("timeout", "timeout".to_string()),
-                    ping_rs::PingError::IoPending => ("io", "pending".to_string()),
-                    ping_rs::PingError::DataSizeTooBig(max) => {
-                        ("too_big", format!("ping payload too big (max: {max})"))
-                    }
+                let kind = match &err {
+                    check::PingError::ResolveHost { .. } => "resolve_host",
+                    check::PingError::NoIpForHost { .. } => "no_ip_for_host",
+                    check::PingError::Ping { .. } => "ping",
                 };
+                let err = err.to_string();
                 task::spawn_blocking(move || {
                     let conn = db.pool.get().map_err(Error::GetConn)?;
                     conn.execute(
@@ -190,9 +186,10 @@ impl Db {
                     Ok(())
                 })
                 .await
-                .unwrap_or_else(|err| Err(Error::JoinError(err)))
+                .unwrap_or_else(|err| Err(Error::JoinError(err)))?;
             }
         }
+        return Ok(());
     }
 
     /// migrates the db at the specified path. is not compatible with the sqlite pool so we open a

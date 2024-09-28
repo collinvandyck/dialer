@@ -7,7 +7,6 @@ use std::{
 };
 
 use async_trait::async_trait;
-use ping_rs::{IpStatus, PingError, PingOptions, PingReply};
 use reqwest::Method;
 use rusqlite::types::FromSql;
 use tokio::task::{spawn_blocking, JoinError, JoinSet};
@@ -19,16 +18,6 @@ use crate::{config, db};
 pub enum Error {
     #[error("could not parse url: {0}")]
     ParseUrl(#[source] url::ParseError),
-
-    #[error("could not resolve host '{host}': {err}")]
-    ResolveHost {
-        host: String,
-        #[source]
-        err: io::Error,
-    },
-
-    #[error("no ip found for host '{host}'")]
-    NoIpForHost { host: String },
 
     #[error("could not build http client: {0}")]
     BuildHttpClient(#[source] reqwest::Error),
@@ -274,6 +263,22 @@ pub struct Ping {
     pub host: String,
 }
 
+#[derive(Debug, thiserror::Error)]
+pub enum PingError {
+    #[error("could not resolve host '{host}': {err}")]
+    ResolveHost {
+        host: String,
+        #[source]
+        err: io::Error,
+    },
+
+    #[error("no ip found for host '{host}'")]
+    NoIpForHost { host: String },
+
+    #[error("ping failed: {err}")]
+    Ping { err: surge_ping::SurgeError },
+}
+
 impl Ping {
     async fn build(name: &str, ping: &config::Ping, db: &db::Db) -> Result<Self, Error> {
         let id = db
@@ -289,119 +294,54 @@ impl Ping {
 
     #[instrument(skip_all, fields(kind="ping", name = self.name))]
     async fn run(&self) -> Result<(), Error> {
-        let ping_res = self.check().await?;
-        tracing::info!("ping res: {ping_res}");
+        let ping_res = self.check().await;
         match ping_res {
-            PingResult::Reply { reply, latency } => {}
-            PingResult::Error { err, latency } => {
-                let err = err.err_msg();
-                tracing::error!("ping err: {err:?}, latency: {latency:?}");
+            Ok(_) => {
+                tracing::info!("Ping ok");
+            }
+            Err(err) => {
+                tracing::error!("Ping failed: {err}")
             }
         };
         Ok(())
     }
 
     #[instrument(skip_all)]
-    async fn check(&self) -> Result<PingResult, Error> {
-        let ping = self.clone();
-        tokio::task::spawn_blocking(move || {
-            let addr: IpAddr = {
-                match ping.host.parse() {
-                    Ok(ip) => ip,
-                    Err(_) => {
-                        // resolve it as a hostname
-                        let ips = dns_lookup::lookup_host(&ping.host).map_err(|err| {
-                            Error::ResolveHost {
-                                host: ping.host.clone(),
-                                err,
-                            }
+    async fn check(&self) -> Result<PingResult, PingError> {
+        // TODO: use a timeout
+        let data = [1, 2, 3, 4];
+        let addr: IpAddr = {
+            match self.host.parse() {
+                Ok(ip) => ip,
+                Err(_) => {
+                    // resolve it as a hostname
+                    let ips = dns_lookup::lookup_host(&self.host).map_err(|err| {
+                        PingError::ResolveHost {
+                            host: self.host.clone(),
+                            err,
+                        }
+                    })?;
+                    let addr = ips
+                        .into_iter()
+                        .filter(|ip| ip.is_ipv4())
+                        .next()
+                        .ok_or_else(|| PingError::NoIpForHost {
+                            host: self.host.clone(),
                         })?;
-                        let addr = ips
-                            .into_iter()
-                            .filter(|ip| ip.is_ipv4())
-                            .next()
-                            .ok_or_else(|| Error::NoIpForHost {
-                                host: ping.host.clone(),
-                            })?;
-                        tracing::info!("Resolved {} to ip {addr}", ping.host);
-                        addr
-                    }
+                    tracing::info!("Resolved {} to ip {addr}", self.host);
+                    addr
                 }
-            };
-            // todo: better timeout
-            let timeout = Duration::from_secs(5);
-            // todo: what should the ping data be
-            let data = [1, 2, 3, 4];
-            let start = Instant::now();
-            let opts = PingOptions {
-                ttl: 128,
-                dont_fragment: true,
-            };
-            tracing::info!("Sending ping to {addr}");
-            ping_rs::send_ping(&addr, timeout, &[], Some(&opts))
-                .map(|reply| PingResult::Reply {
-                    reply,
-                    latency: start.elapsed(),
-                })
-                .or_else(|err| {
-                    Ok(PingResult::Error {
-                        err,
-                        latency: start.elapsed(),
-                    })
-                })
-        })
-        .await
-        .unwrap()
-    }
-}
-
-#[derive(Debug, strum_macros::Display)]
-pub enum PingResult {
-    Reply { reply: PingReply, latency: Duration },
-    Error { err: PingError, latency: Duration },
-}
-
-trait PingErrorExt {
-    fn err_msg(&self) -> String;
-}
-
-impl PingErrorExt for PingError {
-    fn err_msg(&self) -> String {
-        match self {
-            PingError::BadParameter(_) => String::from("bad param"),
-            PingError::OsError(_, _) => String::from("os error"),
-            PingError::IpError(typ) => {
-                let typ = match *typ {
-                    IpStatus::DestinationNetworkUnreachable => "network unreachable",
-                    IpStatus::DestinationHostUnreachable => "dest host unreachable",
-                    IpStatus::DestinationProtocolUnreachable => "dest protocol unreachable",
-                    IpStatus::DestinationPortUnreachable => "dest port unreachable",
-                    IpStatus::DestinationProhibited => "dest prohibited",
-                    IpStatus::NoResources => "no resources",
-                    IpStatus::BadOption => "bad option",
-                    IpStatus::HardwareError => "hardware error",
-                    IpStatus::PacketTooBig => "packet too big",
-                    IpStatus::TimedOut => "timed out",
-                    IpStatus::BadRoute => "bad route",
-                    IpStatus::TtlExpired => "ttl expired",
-                    IpStatus::TtlReassemblyTimeExceeded => "ttl reassembly timeout",
-                    IpStatus::ParameterProblem => "parameter problem",
-                    IpStatus::SourceQuench => "source quench",
-                    IpStatus::BadDestination => "bad dest",
-                    IpStatus::DestinationUnreachable => "dest unreachable",
-                    IpStatus::TimeExceeded => "time exceeded",
-                    IpStatus::BadHeader => "bad header",
-                    IpStatus::UnrecognizedNextHeader => "unrecognized next header",
-                    IpStatus::IcmpError => "icmp error",
-                    IpStatus::DestinationScopeMismatch => "dest scope mismatch",
-                    IpStatus::GeneralFailure => "general failure",
-                    _ => &format!("unknown typ ({typ})"),
-                };
-                format!("ip error: {typ}")
             }
-            PingError::TimedOut => String::from("timed out"),
-            PingError::IoPending => String::from("io pending"),
-            PingError::DataSizeTooBig(_) => String::from("data too big"),
-        }
+        };
+        surge_ping::ping(addr, &data)
+            .await
+            .map(|(packet, latency)| PingResult { packet, latency })
+            .map_err(|err| PingError::Ping { err })
     }
+}
+
+#[derive(Debug)]
+pub struct PingResult {
+    pub packet: surge_ping::IcmpPacket,
+    pub latency: Duration,
 }
