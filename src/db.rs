@@ -98,7 +98,7 @@ impl Db {
         .unwrap_or_else(|err| Err(Error::JoinError(err)))
     }
 
-    async fn record_http(
+    pub async fn record_http(
         &self,
         check: &check::Http,
         res: Result<check::HttpResult, check::HttpError>,
@@ -148,7 +148,7 @@ impl Db {
         Ok(())
     }
 
-    async fn record_ping(
+    pub async fn record_ping(
         &self,
         check: &check::Ping,
         res: Result<check::PingResult, check::PingError>,
@@ -161,7 +161,7 @@ impl Db {
                 task::spawn_blocking(move || {
                     let conn = db.pool.get().map_err(Error::GetConn)?;
                     conn.execute(
-                        "insert into ping_resp (check_name, latency_ms)",
+                        "insert into ping_resp (check_name, latency_ms) values (?1, ?2)",
                         (name, latency),
                     )?;
                     Ok(())

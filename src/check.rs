@@ -31,9 +31,6 @@ pub enum Error {
 
     #[error("could not materialize check: {0}")]
     Materialize(#[source] crate::db::Error),
-
-    #[error("check panicked: {0}")]
-    CheckPanic(#[source] tokio::task::JoinError),
 }
 
 pub async fn run(config: &config::Config) -> Result<(), Error> {
@@ -74,10 +71,11 @@ impl ACheck {
             ACheck::Ping(_) => Kind::Ping,
         }
     }
-    async fn run(&self, ctx: Context) -> Result<(), Error> {
+
+    async fn check(&self, ctx: Context) {
         match self {
-            ACheck::Http(http) => http.run(ctx).await,
-            ACheck::Ping(ping) => ping.run(ctx).await,
+            ACheck::Http(http) => http.check(ctx).await,
+            ACheck::Ping(ping) => ping.check(ctx).await,
         }
     }
 }
@@ -103,6 +101,7 @@ impl Checker {
         })
     }
 
+    #[instrument(skip_all)]
     pub async fn run(&self) -> Result<(), Error> {
         loop {
             let now = Instant::now();
@@ -117,29 +116,18 @@ impl Checker {
         tracing::info!("Spawning {} checks...", self.checks.len());
         for check in &self.checks {
             let check = check.clone();
-            let checker = self.clone();
-            tasks.spawn(async move { checker.run_check_once(&check).await });
+            let ctx = Context {
+                timeout: self.config.interval,
+                db: self.db.clone(),
+            };
+            tasks.spawn(async move { check.check(ctx).await });
         }
         while let Some(res) = tasks.join_next().await {
-            let res = res.map_err(Error::CheckPanic)?;
-            if let Err(err) = res {
-                tracing::error!("check failed: {err}");
+            if let Err(join_err) = res {
+                tracing::error!("check task panicked: {join_err}")
             }
         }
         tracing::info!("{} checks completed.", self.checks.len());
-        Ok(())
-    }
-
-    async fn run_check_once(&self, check: &ACheck) -> Result<(), Error> {
-        let name = check.name();
-        let kind = check.kind();
-        tracing::info!("check: {kind}:{name}");
-        let timeout = self.config.interval;
-        let ctx = Context {
-            timeout,
-            db: self.db.clone(),
-        };
-        check.run(ctx).await?;
         Ok(())
     }
 }
@@ -238,11 +226,11 @@ impl Http {
     }
 
     #[instrument(skip_all, fields(kind="ping", name = self.name))]
-    async fn run(&self, ctx: Context) -> Result<(), Error> {
-        let http_res = tokio::time::timeout(ctx.timeout, self.check(ctx.timeout))
+    async fn check(&self, ctx: Context) {
+        let http_res = tokio::time::timeout(ctx.timeout, self.attempt(ctx.timeout))
             .await
             .unwrap_or_else(|err| Err(HttpError::TaskTimeout(err)));
-        match http_res {
+        match &http_res {
             Ok(_) => {
                 tracing::info!("Http ok");
             }
@@ -250,12 +238,14 @@ impl Http {
                 tracing::error!("Http failed: {err}")
             }
         };
-        Ok(())
+        if let Err(err) = ctx.db.record_http(self, http_res).await {
+            tracing::error!("failed to record http result: {err}");
+        }
     }
 
     /// does one check. an Err variant is an application level error. the HttpResult will contain
     /// any sort of http related error.
-    async fn check(&self, timeout: Duration) -> Result<HttpResult, HttpError> {
+    async fn attempt(&self, timeout: Duration) -> Result<HttpResult, HttpError> {
         let client: reqwest::Client = reqwest::Client::builder()
             .redirect(reqwest::redirect::Policy::none())
             .timeout(timeout)
@@ -327,11 +317,11 @@ impl Ping {
     }
 
     #[instrument(skip_all, fields(kind="ping", name = self.name))]
-    async fn run(&self, ctx: Context) -> Result<(), Error> {
-        let ping_res = tokio::time::timeout(ctx.timeout, self.check())
+    async fn check(&self, ctx: Context) {
+        let ping_res = tokio::time::timeout(ctx.timeout, self.attempt())
             .await
             .unwrap_or_else(|err| Err(PingError::TaskTimeout(err)));
-        match ping_res {
+        match &ping_res {
             Ok(_) => {
                 tracing::info!("Ping ok");
             }
@@ -339,12 +329,13 @@ impl Ping {
                 tracing::error!("Ping failed: {err}")
             }
         };
-        Ok(())
+        if let Err(err) = ctx.db.record_ping(self, ping_res).await {
+            tracing::error!("could not record ping result: {err}");
+        }
     }
 
     #[instrument(skip_all)]
-    async fn check(&self) -> Result<PingResult, PingError> {
-        // TODO: use a timeout
+    async fn attempt(&self) -> Result<PingResult, PingError> {
         let data = [1, 2, 3, 4];
         let addr: IpAddr = {
             match self.host.parse() {
