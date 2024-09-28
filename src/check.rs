@@ -55,6 +55,9 @@ pub enum Error {
 pub enum ApiError {
     #[error(transparent)]
     Error(#[from] Error),
+
+    #[error(transparent)]
+    Db(#[from] db::Error),
 }
 
 // in general we'll mostly just return a 500 to the client.
@@ -177,9 +180,7 @@ impl Checker {
 
     // fetches data from the sqlite db according to request
     async fn query(&self, query: api::Query) -> Result<axum::Json<api::Metrics>, ApiError> {
-        let metrics = api::Metrics {
-            nums: vec![1, 2, 3, 4, 5, 6, 7],
-        };
+        let metrics = self.db.query(query).await?;
         let resp = axum::Json(metrics);
         Ok(resp)
     }

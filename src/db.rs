@@ -1,4 +1,7 @@
-use crate::check::{self};
+use crate::{
+    api,
+    check::{self},
+};
 use eyre::Context;
 use r2d2::PooledConnection;
 use r2d2_sqlite::SqliteConnectionManager;
@@ -43,6 +46,12 @@ impl Db {
         })
         .await
         .unwrap_or_else(|err| Err(Error::JoinError(err)))
+    }
+
+    pub async fn query(&self, query: api::Query) -> Result<api::Metrics, Error> {
+        Ok(api::Metrics {
+            nums: vec![1, 2, 3, 4],
+        })
     }
 
     pub async fn materialize(&self, name: &str, kind: check::Kind) -> Result<u64, Error> {
