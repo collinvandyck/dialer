@@ -52,26 +52,6 @@ pub struct Db {
 }
 
 pub mod record {
-    // represents a record in the http_resp table
-    #[derive(Debug)]
-    pub struct Http {
-        name: String,
-        ts: String,
-        latency_ms: i32,
-        code: Option<u32>,
-        error: Option<String>,
-        error_kind: Option<String>,
-    }
-
-    #[derive(Debug)]
-    pub struct Ping {
-        name: String,
-        ts: String,
-        latency_ms: i32,
-        error: Option<String>,
-        error_kind: Option<String>,
-    }
-
     #[derive(Debug)]
     pub struct Union {
         pub name: String,
@@ -80,33 +60,6 @@ pub mod record {
         pub latency_ms: i32,
         pub error: Option<String>,
         pub error_kind: Option<String>,
-    }
-
-    impl<'conn> TryFrom<&rusqlite::Row<'conn>> for Http {
-        type Error = rusqlite::Error;
-        fn try_from(row: &rusqlite::Row) -> Result<Self, Self::Error> {
-            Ok(Self {
-                name: row.get("check_name")?,
-                ts: row.get("ts")?,
-                latency_ms: row.get("latency_ms")?,
-                code: row.get("code")?,
-                error: row.get("error")?,
-                error_kind: row.get("error_kind")?,
-            })
-        }
-    }
-
-    impl<'conn> TryFrom<&rusqlite::Row<'conn>> for Ping {
-        type Error = rusqlite::Error;
-        fn try_from(row: &rusqlite::Row<'conn>) -> Result<Self, Self::Error> {
-            Ok(Self {
-                name: row.get("check_name")?,
-                ts: row.get("ts")?,
-                latency_ms: row.get("latency_ms")?,
-                error: row.get("error")?,
-                error_kind: row.get("error_kind")?,
-            })
-        }
     }
 
     impl<'conn> TryFrom<&rusqlite::Row<'conn>> for Union {

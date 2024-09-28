@@ -219,7 +219,9 @@ impl Checker {
 
 #[derive(Clone, Copy, Debug, Serialize, PartialEq, Eq)]
 pub enum Kind {
+    #[serde(rename = "http")]
     Http,
+    #[serde(rename = "ping")]
     Ping,
 }
 
