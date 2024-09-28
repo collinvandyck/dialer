@@ -8,9 +8,9 @@ use std::{
 };
 
 use async_trait::async_trait;
-use axum::{extract, routing};
+use axum::{extract, response::IntoResponse, routing};
 use futures::{Future, TryFutureExt};
-use reqwest::Method;
+use reqwest::{Method, StatusCode};
 use rusqlite::types::FromSql;
 use serde::{Deserialize, Serialize};
 use tokio::{
@@ -51,6 +51,20 @@ pub enum Error {
     BindHttp(#[source] io::Error),
 }
 
+#[derive(Debug, thiserror::Error)]
+pub enum ApiError {
+    #[error(transparent)]
+    Error(#[from] Error),
+}
+
+impl axum::response::IntoResponse for ApiError {
+    fn into_response(self) -> axum::response::Response {
+        match self {
+            ApiError::Error(_) => (StatusCode::INTERNAL_SERVER_ERROR, "").into_response(),
+        }
+    }
+}
+
 pub async fn run(config: &config::Config) -> Result<(), Error> {
     let checker = Checker::from_config(config).await?;
     checker.run().await?;
@@ -78,7 +92,9 @@ struct MetricsQuery {
 }
 
 #[derive(Debug, Serialize)]
-struct Metrics {}
+struct Metrics {
+    nums: Vec<i32>,
+}
 
 impl Default for MetricsQuery {
     fn default() -> Self {
@@ -178,8 +194,12 @@ impl Checker {
     }
 
     // fetches data from the sqlite db according to request
-    async fn query(&self, query: MetricsQuery) -> String {
-        format!("{query:#?}")
+    async fn query(&self, query: MetricsQuery) -> Result<axum::Json<Metrics>, ApiError> {
+        let metrics = Metrics {
+            nums: vec![1, 2, 3, 4, 5],
+        };
+        let resp = axum::Json(metrics);
+        Ok(resp)
     }
 
     async fn check_loop(&self) -> Result<(), Error> {
