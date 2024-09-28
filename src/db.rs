@@ -21,8 +21,8 @@ pub enum Error {
     #[error("db pool: {0}")]
     CreatePool(#[source] r2d2::Error),
 
-    #[error("blocking task panicked: {0}")]
-    JoinError(#[source] JoinError),
+    #[error("blocking thread panicked: {0}")]
+    BlockingThreadPanic(#[source] JoinError),
 
     #[error("could not get conn: {0}")]
     GetConn(#[source] r2d2::Error),
@@ -114,7 +114,32 @@ mod record {
     }
 }
 
+// converts a blocking thread panic into an Error
+fn handle_panic<T>(err: JoinError) -> Result<T, Error> {
+    Err(Error::BlockingThreadPanic(err))
+}
+
 impl Db {
+    pub async fn connect(path: &Path) -> Result<Self, Error> {
+        let path = path.to_path_buf();
+        task::spawn_blocking(move || {
+            Self::migrate(&path)?;
+            let mgr = SqliteConnectionManager::file(path);
+            let pool = r2d2::Pool::new(mgr).map_err(Error::CreatePool)?;
+            let pool = Arc::new(pool);
+            Ok(Db { pool })
+        })
+        .await
+        .unwrap_or_else(handle_panic)
+    }
+
+    pub async fn query(&self, query: api::Query) -> Result<api::Metrics, Error> {
+        let db = self.clone();
+        task::spawn_blocking(move || db.query_sync(query))
+            .await
+            .unwrap_or_else(handle_panic)
+    }
+
     #[instrument(skip_all)]
     fn query_sync(&self, query: api::Query) -> Result<api::Metrics, Error> {
         tracing::info!("Querying for metrics data");
@@ -139,25 +164,8 @@ impl Db {
         Ok(api::Metrics::default())
     }
 
-    pub async fn connect(path: &Path) -> Result<Self, Error> {
-        let path = path.to_path_buf();
-        task::spawn_blocking(move || {
-            Self::migrate(&path)?;
-            let mgr = SqliteConnectionManager::file(path);
-            let pool = r2d2::Pool::new(mgr).map_err(Error::CreatePool)?;
-            let pool = Arc::new(pool);
-            Ok(Db { pool })
-        })
-        .await
-        .unwrap_or_else(|err| Err(Error::JoinError(err)))
-    }
-
-    pub async fn query(&self, query: api::Query) -> Result<api::Metrics, Error> {
-        let db = self.clone();
-        task::spawn_blocking(move || db.query_sync(query))
-            .await
-            .unwrap_or_else(|err| Err(Error::JoinError(err)))
-    }
+    // ensures that the check has a record in the db with an id. not used at the moment but i
+    // wanted the pk to be available in case we wanted to use it elsewhere.
     pub async fn materialize(&self, name: &str, kind: check::Kind) -> Result<u64, Error> {
         let db = self.clone();
         let name = name.to_string();
@@ -188,7 +196,7 @@ impl Db {
             Ok(id)
         })
         .await
-        .unwrap_or_else(|err| Err(Error::JoinError(err)))
+        .unwrap_or_else(handle_panic)
     }
 
     pub async fn record_http(
@@ -212,7 +220,7 @@ impl Db {
                     Ok(())
                 })
                 .await
-                .unwrap_or_else(|err| Err(Error::JoinError(err)))?;
+                .unwrap_or_else(handle_panic)?;
             }
             Err(err) => {
                 let kind = match &err {
@@ -233,7 +241,7 @@ impl Db {
                     Ok(())
                 })
                 .await
-                .unwrap_or_else(|err| Err(Error::JoinError(err)))?;
+                .unwrap_or_else(handle_panic)?;
             }
         };
         Ok(())
@@ -257,7 +265,7 @@ impl Db {
                     Ok(())
                 })
                 .await
-                .unwrap_or_else(|err| Err(Error::JoinError(err)))?;
+                .unwrap_or_else(handle_panic)?;
             }
             Err(err) => {
                 let name = check.name.clone();
@@ -276,7 +284,7 @@ impl Db {
                     Ok(())
                 })
                 .await
-                .unwrap_or_else(|err| Err(Error::JoinError(err)))?;
+                .unwrap_or_else(handle_panic)?;
             }
         }
         Ok(())
