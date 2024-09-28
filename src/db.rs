@@ -8,6 +8,7 @@ use r2d2_sqlite::SqliteConnectionManager;
 use rusqlite::{Connection, OptionalExtension};
 use std::{path::Path, sync::Arc};
 use tokio::task::{self, JoinError};
+use tracing::instrument;
 
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
@@ -49,6 +50,20 @@ impl Db {
     }
 
     pub async fn query(&self, query: api::Query) -> Result<api::Metrics, Error> {
+        let db = self.clone();
+        // todo: any async logic before delegating to blocking threadpol.
+        task::spawn_blocking(move || {
+            // delegate to sync method.
+            db.query_sync(query)
+        })
+        .await
+        .unwrap_or_else(|err| Err(Error::JoinError(err)))
+    }
+
+    #[instrument(skip_all)]
+    fn query_sync(&self, query: api::Query) -> Result<api::Metrics, Error> {
+        tracing::info!("Querying for metrics data");
+        let conn = self.conn()?;
         Ok(api::Metrics::default())
     }
 
@@ -57,7 +72,7 @@ impl Db {
         let name = name.to_string();
         let kind = kind.as_str();
         task::spawn_blocking(move || {
-            let conn = db.pool.get().map_err(Error::GetConn)?;
+            let conn = db.conn()?;
             let id = conn
                 .query_row(
                     "select id from checks where name=?1 and kind=?2",
@@ -97,8 +112,7 @@ impl Db {
                 let latency = latency.as_millis() as i64;
                 let name = check.name.clone();
                 task::spawn_blocking(move || {
-                    let conn = db.pool.get().map_err(Error::GetConn)?;
-                    conn.execute(
+                    db.conn()?.execute(
                         "insert into http_resp
                         (check_name, latency_ms, code)
                         values (?1, ?2, ?3)",
@@ -119,8 +133,7 @@ impl Db {
                 let err = err.to_string();
                 let name = check.name.clone();
                 task::spawn_blocking(move || {
-                    let conn = db.pool.get().map_err(Error::GetConn)?;
-                    conn.execute(
+                    db.conn()?.execute(
                         "insert into http_resp
                         (check_name, error, error_kind)
                         values (?1, ?2, ?3)",
@@ -146,8 +159,7 @@ impl Db {
                 let name = check.name.clone();
                 let latency = latency.as_millis() as i64;
                 task::spawn_blocking(move || {
-                    let conn = db.pool.get().map_err(Error::GetConn)?;
-                    conn.execute(
+                    db.conn()?.execute(
                         "insert into ping_resp (check_name, latency_ms) values (?1, ?2)",
                         (name, latency),
                     )?;
@@ -166,8 +178,7 @@ impl Db {
                 };
                 let err = err.to_string();
                 task::spawn_blocking(move || {
-                    let conn = db.pool.get().map_err(Error::GetConn)?;
-                    conn.execute(
+                    db.conn()?.execute(
                         "insert into ping_resp (check_name, error, error_kind)",
                         (name, err, kind),
                     )?;
@@ -178,6 +189,10 @@ impl Db {
             }
         }
         Ok(())
+    }
+
+    fn conn(&self) -> Result<PooledConnection<SqliteConnectionManager>, Error> {
+        self.pool.get().map_err(Error::GetConn)
     }
 
     /// migrates the db at the specified path. is not compatible with the sqlite pool so we open a

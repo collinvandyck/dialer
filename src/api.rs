@@ -1,10 +1,8 @@
 //! Defines types and helpers related to getting data out of the db
 
-use std::time::Duration;
-
-use serde::{Deserialize, Serialize};
-
 use crate::check;
+use serde::{Deserialize, Serialize};
+use std::time::Duration;
 
 #[derive(Debug, Deserialize)]
 #[serde(default)]
