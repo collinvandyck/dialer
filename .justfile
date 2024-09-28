@@ -1,5 +1,5 @@
 loop:
-    watchexec -r -- sh -c "'rm -f checks.db*; cargo run --bin local'"
+    watchexec -r -- sh -c "'rm -f checks.db*; cargo run'"
 
 db:
     sqlite3 checks.db
