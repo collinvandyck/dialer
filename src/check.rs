@@ -43,6 +43,9 @@ pub enum Error {
 
     #[error("axum failure: {0}")]
     Axum(#[source] io::Error),
+
+    #[error("could not bind to http addr: {0}")]
+    BindHttp(#[source] io::Error),
 }
 
 pub async fn run(config: &config::Config) -> Result<(), Error> {
@@ -125,10 +128,9 @@ impl Checker {
             tasks.spawn(async move { checker.check_loop().await });
         }
         while let Some(res) = tasks.join_next().await {
-            return match res.map_err(Error::UnexpectedPanic)? {
-                Ok(_) => Err(Error::UnexpectedQuit),
-                err @ Err(_) => err,
-            };
+            return res
+                .map_err(Error::UnexpectedPanic)?
+                .or(Err(Error::UnexpectedQuit));
         }
         Ok(())
     }
@@ -138,7 +140,7 @@ impl Checker {
         tracing::info!("Starting http listener on {}", self.config.listen);
         let listener = tokio::net::TcpListener::bind(&self.config.listen)
             .await
-            .unwrap();
+            .map_err(Error::BindHttp)?;
         axum::serve(listener, app)
             .await
             .map_err(Error::Axum)
