@@ -19,12 +19,6 @@ pub enum Error {
     #[error("could not parse url: {0}")]
     ParseUrl(#[source] url::ParseError),
 
-    #[error("could not build http client: {0}")]
-    BuildHttpClient(#[source] reqwest::Error),
-
-    #[error("could not build http request: {0}")]
-    BuildHttpRequest(#[source] reqwest::Error),
-
     #[error("could not connect to db: {0}")]
     DbConnect(#[source] crate::db::Error),
 
@@ -194,6 +188,22 @@ pub struct Http {
     code: Option<u32>,
 }
 
+#[derive(Debug, thiserror::Error)]
+pub enum HttpError {
+    #[error("could not build http client: {0}")]
+    BuildHttpClient(#[source] reqwest::Error),
+
+    #[error("could not build http request: {0}")]
+    BuildHttpRequest(#[source] reqwest::Error),
+
+    #[error("failed to make request: {err}")]
+    Error {
+        #[source]
+        err: reqwest::Error,
+        latency: Duration,
+    },
+}
+
 impl Http {
     async fn build(name: &str, http: &config::Http, db: &db::Db) -> Result<Self, Error> {
         let url = reqwest::Url::parse(&http.url).map_err(Error::ParseUrl)?;
@@ -211,22 +221,29 @@ impl Http {
 
     #[instrument(skip_all, fields(kind="ping", name = self.name))]
     async fn run(&self) -> Result<(), Error> {
-        let http_res = self.check().await?;
-        tracing::info!("http res: {http_res}");
+        let http_res = self.check().await;
+        match http_res {
+            Ok(_) => {
+                tracing::info!("Http ok");
+            }
+            Err(err) => {
+                tracing::error!("Http failed: {err}")
+            }
+        };
         Ok(())
     }
 
     /// does one check. an Err variant is an application level error. the HttpResult will contain
     /// any sort of http related error.
-    async fn check(&self) -> Result<HttpResult, Error> {
+    async fn check(&self) -> Result<HttpResult, HttpError> {
         let client: reqwest::Client = reqwest::Client::builder()
             .redirect(reqwest::redirect::Policy::none())
             .build()
-            .map_err(Error::BuildHttpClient)?;
+            .map_err(HttpError::BuildHttpClient)?;
         let req = client
             .request(Method::GET, self.url.as_ref())
             .build()
-            .map_err(Error::BuildHttpRequest)?;
+            .map_err(HttpError::BuildHttpRequest)?;
         let start = Instant::now();
         client
             .execute(req)
@@ -235,11 +252,9 @@ impl Http {
                 resp,
                 latency: start.elapsed(),
             })
-            .or_else(|err| {
-                Ok(HttpResult::Error {
-                    err,
-                    latency: start.elapsed(),
-                })
+            .map_err(|err| HttpError::Error {
+                err,
+                latency: start.elapsed(),
             })
     }
 }
