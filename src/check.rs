@@ -49,6 +49,12 @@ pub struct Checker {
     checks: Vec<ACheck>,
 }
 
+#[derive(Clone)]
+struct Context {
+    timeout: Duration,
+    db: db::Db,
+}
+
 #[derive(Debug, Clone)]
 enum ACheck {
     Http(Http),
@@ -68,10 +74,10 @@ impl ACheck {
             ACheck::Ping(_) => Kind::Ping,
         }
     }
-    async fn run(&self, timeout: Duration) -> Result<(), Error> {
+    async fn run(&self, ctx: Context) -> Result<(), Error> {
         match self {
-            ACheck::Http(http) => http.run(timeout).await,
-            ACheck::Ping(ping) => ping.run(timeout).await,
+            ACheck::Http(http) => http.run(ctx).await,
+            ACheck::Ping(ping) => ping.run(ctx).await,
         }
     }
 }
@@ -129,7 +135,11 @@ impl Checker {
         let kind = check.kind();
         tracing::info!("check: {kind}:{name}");
         let timeout = self.config.interval;
-        check.run(timeout).await?;
+        let ctx = Context {
+            timeout,
+            db: self.db.clone(),
+        };
+        check.run(ctx).await?;
         Ok(())
     }
 }
@@ -228,8 +238,8 @@ impl Http {
     }
 
     #[instrument(skip_all, fields(kind="ping", name = self.name))]
-    async fn run(&self, timeout: Duration) -> Result<(), Error> {
-        let http_res = tokio::time::timeout(timeout, self.check(timeout))
+    async fn run(&self, ctx: Context) -> Result<(), Error> {
+        let http_res = tokio::time::timeout(ctx.timeout, self.check(ctx.timeout))
             .await
             .unwrap_or_else(|err| Err(HttpError::TaskTimeout(err)));
         match http_res {
@@ -317,8 +327,8 @@ impl Ping {
     }
 
     #[instrument(skip_all, fields(kind="ping", name = self.name))]
-    async fn run(&self, timeout: Duration) -> Result<(), Error> {
-        let ping_res = tokio::time::timeout(timeout, self.check())
+    async fn run(&self, ctx: Context) -> Result<(), Error> {
+        let ping_res = tokio::time::timeout(ctx.timeout, self.check())
             .await
             .unwrap_or_else(|err| Err(PingError::TaskTimeout(err)));
         match ping_res {
