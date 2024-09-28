@@ -7,9 +7,13 @@ use std::{
 };
 
 use async_trait::async_trait;
+use futures::TryFutureExt;
 use reqwest::Method;
 use rusqlite::types::FromSql;
-use tokio::task::{spawn_blocking, JoinError, JoinSet};
+use tokio::{
+    task::{spawn_blocking, JoinError, JoinSet},
+    time::error::Elapsed,
+};
 use tracing::{info, instrument};
 
 use crate::{config, db};
@@ -64,10 +68,10 @@ impl ACheck {
             ACheck::Ping(_) => Kind::Ping,
         }
     }
-    async fn run(&self) -> Result<(), Error> {
+    async fn run(&self, timeout: Duration) -> Result<(), Error> {
         match self {
-            ACheck::Http(http) => http.run().await,
-            ACheck::Ping(ping) => ping.run().await,
+            ACheck::Http(http) => http.run(timeout).await,
+            ACheck::Ping(ping) => ping.run(timeout).await,
         }
     }
 }
@@ -124,7 +128,8 @@ impl Checker {
         let name = check.name();
         let kind = check.kind();
         tracing::info!("check: {kind}:{name}");
-        check.run().await?;
+        let timeout = self.config.interval;
+        check.run(timeout).await?;
         Ok(())
     }
 }
@@ -202,6 +207,9 @@ pub enum HttpError {
         err: reqwest::Error,
         latency: Duration,
     },
+
+    #[error("http check failed to complete in time")]
+    TaskTimeout(Elapsed),
 }
 
 impl Http {
@@ -220,8 +228,10 @@ impl Http {
     }
 
     #[instrument(skip_all, fields(kind="ping", name = self.name))]
-    async fn run(&self) -> Result<(), Error> {
-        let http_res = self.check().await;
+    async fn run(&self, timeout: Duration) -> Result<(), Error> {
+        let http_res = tokio::time::timeout(timeout, self.check(timeout))
+            .await
+            .unwrap_or_else(|err| Err(HttpError::TaskTimeout(err)));
         match http_res {
             Ok(_) => {
                 tracing::info!("Http ok");
@@ -235,9 +245,10 @@ impl Http {
 
     /// does one check. an Err variant is an application level error. the HttpResult will contain
     /// any sort of http related error.
-    async fn check(&self) -> Result<HttpResult, HttpError> {
+    async fn check(&self, timeout: Duration) -> Result<HttpResult, HttpError> {
         let client: reqwest::Client = reqwest::Client::builder()
             .redirect(reqwest::redirect::Policy::none())
+            .timeout(timeout)
             .build()
             .map_err(HttpError::BuildHttpClient)?;
         let req = client
@@ -245,30 +256,25 @@ impl Http {
             .build()
             .map_err(HttpError::BuildHttpRequest)?;
         let start = Instant::now();
-        client
+        let res = client
             .execute(req)
             .await
-            .map(|resp| HttpResult::Response {
+            .map(|resp| HttpResult {
                 resp,
                 latency: start.elapsed(),
             })
             .map_err(|err| HttpError::Error {
                 err,
                 latency: start.elapsed(),
-            })
+            });
+        res
     }
 }
 
-#[derive(Debug, strum_macros::Display)]
-pub enum HttpResult {
-    Response {
-        resp: reqwest::Response,
-        latency: Duration,
-    },
-    Error {
-        err: reqwest::Error,
-        latency: Duration,
-    },
+#[derive(Debug)]
+pub struct HttpResult {
+    pub resp: reqwest::Response,
+    pub latency: Duration,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -292,6 +298,9 @@ pub enum PingError {
 
     #[error("ping failed: {err}")]
     Ping { err: surge_ping::SurgeError },
+
+    #[error("ping task failed to complete")]
+    TaskTimeout(Elapsed),
 }
 
 impl Ping {
@@ -308,8 +317,10 @@ impl Ping {
     }
 
     #[instrument(skip_all, fields(kind="ping", name = self.name))]
-    async fn run(&self) -> Result<(), Error> {
-        let ping_res = self.check().await;
+    async fn run(&self, timeout: Duration) -> Result<(), Error> {
+        let ping_res = tokio::time::timeout(timeout, self.check())
+            .await
+            .unwrap_or_else(|err| Err(PingError::TaskTimeout(err)));
         match ping_res {
             Ok(_) => {
                 tracing::info!("Ping ok");
@@ -343,7 +354,6 @@ impl Ping {
                         .ok_or_else(|| PingError::NoIpForHost {
                             host: self.host.clone(),
                         })?;
-                    tracing::info!("Resolved {} to ip {addr}", self.host);
                     addr
                 }
             }

@@ -98,10 +98,14 @@ impl Db {
         .unwrap_or_else(|err| Err(Error::JoinError(err)))
     }
 
-    async fn record_http(&self, check: &check::Http, res: &check::HttpResult) -> Result<(), Error> {
+    async fn record_http(
+        &self,
+        check: &check::Http,
+        res: Result<check::HttpResult, check::HttpError>,
+    ) -> Result<(), Error> {
         let db = self.clone();
         match res {
-            check::HttpResult::Response { resp, latency } => {
+            Ok(check::HttpResult { resp, latency }) => {
                 let name = check.name();
                 let code = resp.status().as_u16();
                 let latency = latency.as_millis() as i64;
@@ -116,21 +120,16 @@ impl Db {
                     Ok(())
                 })
                 .await
-                .unwrap_or_else(|err| Err(Error::JoinError(err)))
+                .unwrap_or_else(|err| Err(Error::JoinError(err)))?;
             }
-            check::HttpResult::Error { err, latency } => {
-                let name = check.name();
-                let kind = {
-                    if err.is_status() {
-                        "status"
-                    } else if err.is_body() {
-                        "body"
-                    } else if err.is_decode() {
-                        "decode"
-                    } else {
-                        "unknown"
-                    }
+            Err(err) => {
+                let kind = match &err {
+                    check::HttpError::BuildHttpClient(_) => "build_client",
+                    check::HttpError::BuildHttpRequest(_) => "build_request",
+                    check::HttpError::TaskTimeout(_) => "task_timeout",
+                    check::HttpError::Error { err, latency } => "call",
                 };
+                let name = check.name();
                 let err = err.to_string();
                 task::spawn_blocking(move || {
                     let conn = db.pool.get().map_err(Error::GetConn)?;
@@ -143,9 +142,10 @@ impl Db {
                     Ok(())
                 })
                 .await
-                .unwrap_or_else(|err| Err(Error::JoinError(err)))
+                .unwrap_or_else(|err| Err(Error::JoinError(err)))?;
             }
-        }
+        };
+        Ok(())
     }
 
     async fn record_ping(
@@ -175,6 +175,7 @@ impl Db {
                     check::PingError::ResolveHost { .. } => "resolve_host",
                     check::PingError::NoIpForHost { .. } => "no_ip_for_host",
                     check::PingError::Ping { .. } => "ping",
+                    check::PingError::TaskTimeout(_) => "task_timeout",
                 };
                 let err = err.to_string();
                 task::spawn_blocking(move || {
@@ -189,7 +190,7 @@ impl Db {
                 .unwrap_or_else(|err| Err(Error::JoinError(err)))?;
             }
         }
-        return Ok(());
+        Ok(())
     }
 
     /// migrates the db at the specified path. is not compatible with the sqlite pool so we open a
