@@ -19,7 +19,7 @@ use tokio::{
 };
 use tracing::{info, instrument};
 
-use crate::{config, db};
+use crate::{api, config, db};
 
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
@@ -82,24 +82,6 @@ pub struct Checker {
 struct Context {
     timeout: Duration,
     db: db::Db,
-}
-
-/// for fetching metrics from the sqlite db.
-#[derive(Debug, Deserialize)]
-#[serde(default)]
-struct MetricsQuery {
-    range: i32,
-}
-
-#[derive(Debug, Serialize)]
-struct Metrics {
-    nums: Vec<i32>,
-}
-
-impl Default for MetricsQuery {
-    fn default() -> Self {
-        MetricsQuery { range: 42 }
-    }
 }
 
 #[derive(Debug, Clone)]
@@ -179,7 +161,7 @@ impl Checker {
         let app = app.route(
             "/query",
             routing::get(
-                |extract::Query(query): extract::Query<MetricsQuery>| async move {
+                |extract::Query(query): extract::Query<api::Query>| async move {
                     data.query(query).await
                 },
             ),
@@ -194,8 +176,8 @@ impl Checker {
     }
 
     // fetches data from the sqlite db according to request
-    async fn query(&self, query: MetricsQuery) -> Result<axum::Json<Metrics>, ApiError> {
-        let metrics = Metrics {
+    async fn query(&self, query: api::Query) -> Result<axum::Json<api::Metrics>, ApiError> {
+        let metrics = api::Metrics {
             nums: vec![1, 2, 3, 4, 5, 6, 7],
         };
         let resp = axum::Json(metrics);
