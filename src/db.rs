@@ -53,6 +53,25 @@ mod record {
         error_kind: Option<String>,
     }
 
+    #[derive(Debug)]
+    pub struct Ping {
+        name: String,
+        ts: String,
+        latency_ms: i32,
+        error: Option<String>,
+        error_kind: Option<String>,
+    }
+
+    #[derive(Debug)]
+    pub struct Union {
+        name: String,
+        kind: String,
+        ts: String,
+        latency_ms: i32,
+        error: Option<String>,
+        error_kind: Option<String>,
+    }
+
     impl<'conn> TryFrom<&rusqlite::Row<'conn>> for Http {
         type Error = rusqlite::Error;
         fn try_from(row: &rusqlite::Row) -> Result<Self, Self::Error> {
@@ -66,6 +85,33 @@ mod record {
             })
         }
     }
+
+    impl<'conn> TryFrom<&rusqlite::Row<'conn>> for Ping {
+        type Error = rusqlite::Error;
+        fn try_from(row: &rusqlite::Row<'conn>) -> Result<Self, Self::Error> {
+            Ok(Self {
+                name: row.get("check_name")?,
+                ts: row.get("ts")?,
+                latency_ms: row.get("latency_ms")?,
+                error: row.get("error")?,
+                error_kind: row.get("error_kind")?,
+            })
+        }
+    }
+
+    impl<'conn> TryFrom<&rusqlite::Row<'conn>> for Union {
+        type Error = rusqlite::Error;
+        fn try_from(row: &rusqlite::Row) -> Result<Self, Self::Error> {
+            Ok(Self {
+                name: row.get("check_name")?,
+                kind: row.get("kind")?,
+                ts: row.get("ts")?,
+                latency_ms: row.get("latency_ms")?,
+                error: row.get("error")?,
+                error_kind: row.get("error_kind")?,
+            })
+        }
+    }
 }
 
 impl Db {
@@ -74,13 +120,21 @@ impl Db {
         tracing::info!("Querying for metrics data");
         let conn = self.conn()?;
         let mut stmt = conn
-            .prepare_cached("select * from http_resp")
+            .prepare_cached(
+                "select * from (
+                    select
+                    check_name, 'http' as kind, ts, latency_ms, error, error_kind from http_resp
+                    union
+                    select
+                    check_name, 'ping' as kind, ts, latency_ms, error, error_kind from ping_resp
+                )
+                ",
+            )
             .map_err(|err| Error::Prepare { err })?;
-        let kind = check::Kind::Http;
-        let res = stmt.query_map([], |row| record::Http::try_from(row))?;
-        let http: Vec<record::Http> = res.collect::<Result<_, _>>()?;
-        for rec in http {
-            tracing::info!("http: {rec:#?}");
+        let res = stmt.query_map([], |row| record::Union::try_from(row))?;
+        let unions: Vec<record::Union> = res.collect::<Result<_, _>>()?;
+        for rec in unions {
+            tracing::info!("union: {rec:#?}");
         }
         Ok(api::Metrics::default())
     }
