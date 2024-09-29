@@ -1,5 +1,5 @@
 loop:
-    watchexec -r -- sh -c "'cargo run'"
+    watchexec -r -- sh -c "'cargo run --release'"
 
 db:
     sqlite3 checks.db

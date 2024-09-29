@@ -7,7 +7,7 @@ use crate::{
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Clone)]
 #[serde(default)]
 pub struct Query {
     start_time: Option<chrono::DateTime<chrono::Utc>>,
@@ -37,7 +37,7 @@ impl Metrics {
                 let series = Series {
                     kind,
                     name: name.to_string(),
-                    values: vec![],
+                    values: Vec::with_capacity(1024),
                 };
                 self.series.push(series);
                 self.series.len() - 1
