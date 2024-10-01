@@ -7,6 +7,7 @@ use std::{
     time::{Duration, Instant},
 };
 
+use anyhow::{anyhow, bail, Context, Result};
 use async_trait::async_trait;
 use axum::{
     extract,
@@ -14,6 +15,8 @@ use axum::{
     routing,
 };
 use futures::{Future, TryFutureExt};
+use r2d2::PooledConnection;
+use r2d2_sqlite::SqliteConnectionManager;
 use reqwest::{Method, StatusCode};
 use rusqlite::types::FromSql;
 use serde::{Deserialize, Serialize};
@@ -23,7 +26,10 @@ use tokio::{
 };
 use tracing::{info, instrument};
 
-use crate::{api, config, db};
+use crate::{
+    api::{self, Metrics},
+    config, db,
+};
 
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
@@ -73,7 +79,7 @@ impl axum::response::IntoResponse for ApiError {
     }
 }
 
-pub async fn run(config: &config::Config) -> Result<(), Error> {
+pub async fn run(config: &config::Config) -> anyhow::Result<()> {
     let checker = Checker::from_config(config).await?;
     checker.run().await?;
     Ok(())
@@ -86,38 +92,10 @@ pub struct Checker {
     checks: Vec<Check>,
 }
 
-#[derive(Clone)]
-struct Context {
-    timeout: Duration,
-    db: db::Db,
-}
-
 #[derive(Debug, Clone)]
 enum Check {
     Http(Http),
     Ping(Ping),
-}
-
-impl Check {
-    fn name(&self) -> &str {
-        match self {
-            Check::Http(c) => &c.name,
-            Check::Ping(c) => &c.name,
-        }
-    }
-    fn kind(&self) -> Kind {
-        match self {
-            Check::Http(_) => Kind::Http,
-            Check::Ping(_) => Kind::Ping,
-        }
-    }
-
-    async fn check(&self, ctx: Context) {
-        match self {
-            Check::Http(http) => http.check(ctx).await,
-            Check::Ping(ping) => ping.check(ctx).await,
-        }
-    }
 }
 
 impl Checker {
@@ -142,20 +120,24 @@ impl Checker {
     }
 
     #[instrument(skip_all)]
-    pub async fn run(&self) -> Result<(), Error> {
+    pub async fn run(&self) -> anyhow::Result<()> {
         let mut tasks = JoinSet::default();
         {
             let checker = self.clone();
-            tasks.spawn(async move { checker.listen().await });
+            tasks.spawn(async move { checker.listen().await.context("listener failed") });
         }
         {
             let checker = self.clone();
-            tasks.spawn(async move { checker.check_loop().await });
+            tasks.spawn(async move { checker.check_loop().await.context("checker failed") });
         }
-        while let Some(res) = tasks.join_next().await {
-            return res
-                .map_err(Error::UnexpectedPanic)?
-                .or(Err(Error::UnexpectedQuit));
+        if let Some(res) = tasks.join_next().await {
+            let res = res.context("background task panicked")?;
+            match res {
+                Ok(res) => {
+                    bail!("unexpected quit")
+                }
+                Err(err) => return Err(err),
+            }
         }
         Ok(())
     }
@@ -168,7 +150,10 @@ impl Checker {
             "/query",
             routing::get(
                 |extract::Query(query): extract::Query<api::Query>| async move {
-                    data.query(query).await
+                    data.query(query).await.map_err(|err| {
+                        tracing::error!("handler failed: {err:?}");
+                        (StatusCode::INTERNAL_SERVER_ERROR, "").into_response()
+                    })
                 },
             ),
         );
@@ -176,6 +161,7 @@ impl Checker {
         let listener = tokio::net::TcpListener::bind(&self.config.listen)
             .await
             .map_err(Error::BindHttp)?;
+        tracing::info!("Bound http listener on {}", self.config.listen);
         axum::serve(listener, app)
             .await
             .map_err(Error::Axum)
@@ -183,8 +169,42 @@ impl Checker {
     }
 
     // fetches data from the sqlite db according to request
-    async fn query(&self, query: api::Query) -> Result<axum::Json<api::Metrics>, ApiError> {
-        let metrics = self.db.query(query).await?;
+    async fn query(&self, query: api::Query) -> Result<axum::Json<api::Metrics>> {
+        let metrics = self
+            .with_conn(move |conn| {
+                let mut metrics = Metrics::default();
+                let mut rows = conn.prepare_cached(
+                    "
+                    select c.name, c.kind, r.epoch, r.ms, r.err
+                    from results r
+                    join checks c on r.check_id = c.id
+                    where r.err is null
+                    ",
+                )?;
+                let rows = rows.query_map([], |row| {
+                    Ok(db::Record {
+                        name: row.get("name")?,
+                        kind: row.get("kind")?,
+                        epoch: row.get("epoch")?,
+                        ms: row.get("ms")?,
+                    })
+                })?;
+                for row in rows {
+                    let row = row?;
+                    let kind: Kind = Kind::try_from(row.kind.as_str())?;
+                    let series = metrics.get_mut(&row.name, kind);
+                    let ts = chrono::DateTime::from_timestamp(row.epoch as i64, 0)
+                        .context("could not convert epoch to timestamp")?;
+                    series.values.push(api::TimeValue {
+                        ts,
+                        latency_ms: Some(row.ms),
+                        err: None,
+                    });
+                    //
+                }
+                Ok(metrics)
+            })
+            .await?;
         let resp = axum::Json(metrics);
         Ok(resp)
     }
@@ -192,29 +212,155 @@ impl Checker {
     async fn check_loop(&self) -> Result<(), Error> {
         loop {
             let now = Instant::now();
-            self.check().await?;
+            self.check_all().await?;
             let sleep = self.config.interval.saturating_sub(now.elapsed());
             tokio::time::sleep(sleep).await;
         }
     }
 
     /// runs all of the checks once.
-    async fn check(&self) -> Result<(), Error> {
+    async fn check_all(&self) -> Result<(), Error> {
         let mut tasks = JoinSet::default();
         for check in &self.checks {
+            let checker = self.clone();
             let check = check.clone();
-            let ctx = Context {
-                timeout: self.config.interval,
-                db: self.db.clone(),
-            };
-            tasks.spawn(async move { check.check(ctx).await });
+            tasks.spawn(async move { checker.check(&check).await });
         }
         while let Some(res) = tasks.join_next().await {
-            if let Err(join_err) = res {
-                tracing::error!("check task panicked: {join_err}")
+            match res {
+                Ok(Ok(())) => {}
+                Ok(Err(err)) => {
+                    tracing::error!("task failed: {err:?}");
+                }
+                Err(join_err) => {
+                    tracing::error!("check task panicked: {join_err}")
+                }
             }
         }
         Ok(())
+    }
+
+    async fn check(&self, check: &Check) -> anyhow::Result<()> {
+        match check {
+            Check::Http(http) => self.check_http(http).await.context("http check failed"),
+            Check::Ping(ping) => self.check_ping(ping).await.context("ping check failed"),
+        }
+    }
+
+    async fn check_http(&self, http: &Http) -> anyhow::Result<()> {
+        let timeout = self.config.interval;
+        let res = tokio::time::timeout(timeout, async move {
+            let client: reqwest::Client = reqwest::Client::builder()
+                .redirect(reqwest::redirect::Policy::none())
+                .timeout(timeout)
+                .build()
+                .context("could not build http client")?;
+            let req = client
+                .request(Method::GET, http.url.as_ref())
+                .build()
+                .context("could not build http req")?;
+            let start = Instant::now();
+            let resp: reqwest::Response =
+                client.execute(req).await.context("http request failed")?;
+            anyhow::Ok((resp, start.elapsed()))
+        })
+        .await;
+        match res {
+            Ok(Ok((resp, latency))) => {
+                tracing::info!("http: ok");
+                self.mark_ok(http.id, latency).await?;
+            }
+            Ok(Err(err)) => {
+                tracing::error!("http: {err}");
+                self.mark_err(http.id, format!("{err:?}")).await?;
+            }
+            Err(elapsed) => {
+                tracing::error!("http timeout after {elapsed:?}");
+                self.mark_err(http.id, "timeout").await?;
+            }
+        };
+        Ok(())
+    }
+
+    async fn check_ping(&self, ping: &Ping) -> anyhow::Result<()> {
+        let timeout = self.config.interval;
+        let res = tokio::time::timeout(timeout, async move {
+            let data = [1, 2, 3, 4];
+            let addr: IpAddr = {
+                match ping.host.parse() {
+                    Ok(ip) => ip,
+                    Err(_) => {
+                        // resolve it as a hostname
+                        let ips = dns_lookup::lookup_host(&ping.host).context("lookup host")?;
+                        let addr = ips
+                            .into_iter()
+                            .filter(|ip| ip.is_ipv4())
+                            .next()
+                            .ok_or_else(|| anyhow!("no ip for host"))?;
+                        addr
+                    }
+                }
+            };
+            surge_ping::ping(addr, &data).await.context("ping failed")
+        })
+        .await;
+        match res {
+            Ok(Ok((pkt, latency))) => {
+                tracing::info!("ping: ok");
+                self.mark_ok(ping.id, latency).await?;
+            }
+            Ok(Err(err)) => {
+                tracing::error!("ping: {err}");
+                self.mark_err(ping.id, format!("{err:?}")).await?;
+            }
+            Err(elapsed) => {
+                tracing::error!("ping: timeout after {elapsed:?}");
+                self.mark_err(ping.id, "timeout").await?;
+            }
+        };
+        Ok(())
+    }
+
+    async fn mark_err(&self, id: u64, err: impl AsRef<str>) -> anyhow::Result<()> {
+        let err = err.as_ref().to_string();
+        self.with_conn(move |conn| {
+            conn.execute(
+                "insert into results (check_id, err) values (?1,?2)",
+                (id, format!("{err:?}")),
+            )?;
+            Ok(())
+        })
+        .await?;
+        Ok(())
+    }
+
+    async fn mark_ok(&self, id: u64, latency: Duration) -> anyhow::Result<()> {
+        let ms = latency.as_millis() as u64;
+        self.with_conn(move |conn| {
+            conn.execute(
+                "insert into results (check_id, ms) values (?1,?2)",
+                [id, ms],
+            )?;
+            Ok(())
+        })
+        .await?;
+        Ok(())
+    }
+
+    async fn with_conn<F, R>(&self, f: F) -> anyhow::Result<R>
+    where
+        F: Fn(PooledConnection<SqliteConnectionManager>) -> anyhow::Result<R>,
+        F: Send + Sync + 'static,
+        R: Send + Sync + 'static,
+    {
+        let checker = self.clone();
+        let res = tokio::task::spawn_blocking(move || {
+            let conn = checker.db.conn().context("get conn")?;
+            f(conn)
+        })
+        .await
+        .context("blocking thread panicked")?;
+        res
     }
 }
 
@@ -227,12 +373,12 @@ pub enum Kind {
 }
 
 impl TryFrom<&str> for Kind {
-    type Error = String;
+    type Error = anyhow::Error;
     fn try_from(kind: &str) -> Result<Self, Self::Error> {
         match kind {
             "http" => Ok(Self::Http),
             "ping" => Ok(Self::Ping),
-            _ => Err(format!("unknown kind: '{kind}'")),
+            _ => bail!("unknown kind: '{kind}'"),
         }
     }
 }
@@ -296,51 +442,11 @@ impl Http {
             code: http.code.clone(),
         })
     }
+}
 
-    #[instrument(skip_all, fields(kind="ping", name = self.name))]
-    async fn check(&self, ctx: Context) {
-        let http_res = tokio::time::timeout(ctx.timeout, self.attempt(ctx.timeout))
-            .await
-            .unwrap_or_else(|err| Err(HttpError::TaskTimeout(err)));
-        match &http_res {
-            Ok(_) => {
-                tracing::info!("Http ok");
-            }
-            Err(err) => {
-                tracing::error!("Http failed: {err}")
-            }
-        };
-        if let Err(err) = ctx.db.record_http(self, http_res).await {
-            tracing::error!("failed to record http result: {err}");
-        }
-    }
-
-    /// does one check. an Err variant is an application level error. the HttpResult will contain
-    /// any sort of http related error.
-    async fn attempt(&self, timeout: Duration) -> Result<HttpResult, HttpError> {
-        let client: reqwest::Client = reqwest::Client::builder()
-            .redirect(reqwest::redirect::Policy::none())
-            .timeout(timeout)
-            .build()
-            .map_err(HttpError::BuildHttpClient)?;
-        let req = client
-            .request(Method::GET, self.url.as_ref())
-            .build()
-            .map_err(HttpError::BuildHttpRequest)?;
-        let start = Instant::now();
-        let res = client
-            .execute(req)
-            .await
-            .map(|resp| HttpResult {
-                resp,
-                latency: start.elapsed(),
-            })
-            .map_err(|err| HttpError::Error {
-                err,
-                latency: start.elapsed(),
-            });
-        res
-    }
+pub enum CheckResult {
+    Ok { latency: Duration },
+    Err { err: String },
 }
 
 #[derive(Debug)]
@@ -386,55 +492,6 @@ impl Ping {
             name: name.to_string(),
             host: ping.host.clone(),
         })
-    }
-
-    #[instrument(skip_all, fields(kind="ping", name = self.name))]
-    async fn check(&self, ctx: Context) {
-        let ping_res = tokio::time::timeout(ctx.timeout, self.attempt())
-            .await
-            .unwrap_or_else(|err| Err(PingError::TaskTimeout(err)));
-        match &ping_res {
-            Ok(_) => {
-                tracing::info!("Ping ok");
-            }
-            Err(err) => {
-                tracing::error!("Ping failed: {err}")
-            }
-        };
-        if let Err(err) = ctx.db.record_ping(self, ping_res).await {
-            tracing::error!("could not record ping result: {err}");
-        }
-    }
-
-    #[instrument(skip_all)]
-    async fn attempt(&self) -> Result<PingResult, PingError> {
-        let data = [1, 2, 3, 4];
-        let addr: IpAddr = {
-            match self.host.parse() {
-                Ok(ip) => ip,
-                Err(_) => {
-                    // resolve it as a hostname
-                    let ips = dns_lookup::lookup_host(&self.host).map_err(|err| {
-                        PingError::ResolveHost {
-                            host: self.host.clone(),
-                            err,
-                        }
-                    })?;
-                    let addr = ips
-                        .into_iter()
-                        .filter(|ip| ip.is_ipv4())
-                        .next()
-                        .ok_or_else(|| PingError::NoIpForHost {
-                            host: self.host.clone(),
-                        })?;
-                    addr
-                }
-            }
-        };
-        surge_ping::ping(addr, &data)
-            .await
-            .map(|(packet, latency)| PingResult { packet, latency })
-            .map_err(|err| PingError::Ping { err })
     }
 }
 

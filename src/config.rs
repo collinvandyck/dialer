@@ -4,7 +4,7 @@ use std::{
     time::Duration,
 };
 
-use eyre::Context;
+use anyhow::Context;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
@@ -34,20 +34,20 @@ pub struct Http {
 }
 
 impl Config {
-    pub async fn from_path(p: impl AsRef<Path>) -> eyre::Result<Self> {
+    pub async fn from_path(p: impl AsRef<Path>) -> anyhow::Result<Self> {
         let p = p.as_ref();
         tokio::fs::read(p)
             .await
-            .wrap_err_with(|| format!("read config file at {}", p.display()))
-            .and_then(|bs| String::from_utf8(bs).wrap_err("config to string"))
-            .and_then(|s| s.as_str().try_into())
+            .with_context(|| format!("read config file at {}", p.display()))
+            .and_then(|bs| String::from_utf8(bs).context("config to string"))
+            .and_then(|s| s.as_str().try_into().context("parse config"))
     }
 }
 
 impl TryFrom<&str> for Config {
-    type Error = eyre::Report;
+    type Error = anyhow::Error;
     fn try_from(value: &str) -> Result<Self, Self::Error> {
-        toml::from_str(value).wrap_err("unmarshal toml")
+        toml::from_str(value).context("unmarshal toml")
     }
 }
 

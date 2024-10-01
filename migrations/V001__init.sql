@@ -7,26 +7,9 @@ create table checks (
 create table results (
     id integer primary key autoincrement,
     check_id integer not null,
+    epoch integer not null default (CAST(strftime('%s', 'now') AS INTEGER)),
+    ms integer,
+    err text,
     FOREIGN KEY(check_id) REFERENCES checks(id)
 );
-
-create table http_resp (
-    id integer primary key autoincrement,
-    check_name text not null,
-    ts text default (datetime('now', 'utc')),
-    latency_ms integer not null,
-    code integer,
-    error text,
-    error_kind text
-);
-create index idx_http_resp_ts on http_resp(ts);
-
-create table ping_resp (
-    id integer primary key autoincrement,
-    check_name text not null,
-    ts text default (datetime('now', 'utc')),
-    latency_ms integer not null,
-    error text,
-    error_kind text
-);
-create index idx_ping_resp_ts on ping_resp(ts);
+create index idx_results_epoch on results(epoch);

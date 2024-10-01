@@ -11,7 +11,7 @@ struct Args {
 }
 
 #[tokio::main]
-async fn main() -> eyre::Result<()> {
+async fn main() -> anyhow::Result<()> {
     let fmt_layer = tracing_subscriber::fmt::layer().with_target(false);
     let filter_layer = tracing_subscriber::EnvFilter::try_from_default_env()
         .or_else(|_| EnvFilter::try_new("info"))

@@ -51,6 +51,15 @@ pub struct Db {
     pool: Arc<DbPool>,
 }
 
+/// represents a results record
+#[derive(Debug)]
+pub struct Record {
+    pub name: String,
+    pub kind: String,
+    pub epoch: u64,
+    pub ms: u64,
+}
+
 pub mod record {
     #[derive(Debug)]
     pub struct Union {
@@ -81,49 +90,6 @@ pub mod record {
 fn handle_panic<T>(err: JoinError) -> Result<T, Error> {
     Err(Error::BlockingThreadPanic(err))
 }
-
-impl TryFrom<record::Union> for TimeValue {
-    type Error = Error;
-    fn try_from(rec: record::Union) -> Result<Self, Self::Error> {
-        let ts = chrono::NaiveDateTime::parse_from_str(&rec.ts, "%Y-%m-%d %H:%M:%S")
-            .map_err(|err| Error::ParseDateTime { err })?
-            .and_utc();
-        let tv = match &rec.error {
-            None => api::TimeValue {
-                ts,
-                latency_ms: Some(rec.latency_ms),
-                err: None,
-            },
-            Some(msg) => api::TimeValue {
-                ts,
-                latency_ms: None,
-                err: Some(api::Error {
-                    msg: msg.clone(),
-                    kind: rec.error_kind.unwrap_or_default(),
-                }),
-            },
-        };
-        Ok(tv)
-    }
-}
-
-impl TryFrom<Vec<record::Union>> for api::Metrics {
-    type Error = Error;
-    fn try_from(recs: Vec<record::Union>) -> Result<Self, Self::Error> {
-        let mut metrics = api::Metrics::default();
-        for rec in recs {
-            let kind: check::Kind = rec
-                .kind
-                .as_str()
-                .try_into()
-                .map_err(|msg| Error::KindConversion { msg })?;
-            let series = metrics.get_mut(&rec.name, kind);
-            series.values.push(rec.try_into()?);
-        }
-        Ok(metrics)
-    }
-}
-
 impl Db {
     pub async fn connect(path: &Path) -> Result<Self, Error> {
         let path = path.to_path_buf();
@@ -136,35 +102,6 @@ impl Db {
         })
         .await
         .unwrap_or_else(handle_panic)
-    }
-
-    pub async fn query(&self, query: api::Query) -> Result<api::Metrics, Error> {
-        let db = self.clone();
-        task::spawn_blocking(move || db.query_sync(query))
-            .await
-            .unwrap_or_else(handle_panic)
-    }
-
-    #[instrument(skip_all)]
-    fn query_sync(&self, query: api::Query) -> Result<api::Metrics, Error> {
-        let conn = self.conn()?;
-        let mut stmt = conn
-            .prepare_cached(
-                "
-                select * from (
-                    select
-                    check_name, 'http' as kind, ts, latency_ms, error, error_kind from http_resp
-                    union
-                    select
-                    check_name, 'ping' as kind, ts, latency_ms, error, error_kind from ping_resp
-                )
-                ",
-            )
-            .map_err(|err| Error::Prepare { err })?;
-        let recs = stmt
-            .query_map([], |row| record::Union::try_from(row))?
-            .collect::<Result<Vec<_>, _>>()?;
-        recs.try_into()
     }
 
     // ensures that the check has a record in the db with an id. not used at the moment but i
@@ -294,7 +231,7 @@ impl Db {
     }
 
     /// fetch a new conn from the underlying pool
-    fn conn(&self) -> Result<PooledConnection<SqliteConnectionManager>, Error> {
+    pub fn conn(&self) -> Result<PooledConnection<SqliteConnectionManager>, Error> {
         self.pool.get().map_err(Error::GetConn)
     }
 
