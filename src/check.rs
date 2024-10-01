@@ -1,83 +1,23 @@
-use core::net;
 use std::{
     fmt::Display,
-    io,
-    net::{AddrParseError, IpAddr},
-    process::Output,
+    net::IpAddr,
     time::{Duration, Instant},
 };
 
 use anyhow::{anyhow, bail, Context, Result};
-use async_trait::async_trait;
-use axum::{
-    extract,
-    response::{self, IntoResponse},
-    routing,
-};
-use futures::{Future, TryFutureExt};
+use axum::{extract, response::IntoResponse, routing};
 use r2d2::PooledConnection;
 use r2d2_sqlite::SqliteConnectionManager;
 use reqwest::{Method, StatusCode};
-use rusqlite::types::FromSql;
-use serde::{Deserialize, Serialize};
-use tokio::{
-    task::{spawn_blocking, JoinError, JoinSet},
-    time::error::Elapsed,
-};
-use tracing::{info, instrument};
+use rusqlite::OptionalExtension;
+use serde::Serialize;
+use tokio::{task::JoinSet, time::error::Elapsed};
+use tracing::instrument;
 
 use crate::{
     api::{self, Metrics},
     config, db,
 };
-
-#[derive(thiserror::Error, Debug)]
-pub enum Error {
-    #[error("could not parse url: {0}")]
-    ParseUrl(#[source] url::ParseError),
-
-    #[error("could not connect to db: {0}")]
-    DbConnect(#[source] crate::db::Error),
-
-    #[error("could not persist check: {0}")]
-    EnsureCheck(#[source] crate::db::Error),
-
-    #[error("could not materialize check: {0}")]
-    Materialize(#[source] crate::db::Error),
-
-    #[error("task panicked: {0}")]
-    UnexpectedPanic(#[source] JoinError),
-
-    #[error("http or checker quit unexpectedly")]
-    UnexpectedQuit,
-
-    #[error("http quit unexpectedly")]
-    HttpQuit,
-
-    #[error("axum failure: {0}")]
-    Axum(#[source] io::Error),
-
-    #[error("could not bind to http addr: {0}")]
-    BindHttp(#[source] io::Error),
-}
-
-#[derive(Debug, thiserror::Error)]
-pub enum ApiError {
-    #[error(transparent)]
-    Error(#[from] Error),
-
-    #[error(transparent)]
-    Db(#[from] db::Error),
-}
-
-// in general we'll mostly just return a 500 to the client.
-// todo: should we log here?
-impl axum::response::IntoResponse for ApiError {
-    fn into_response(self) -> axum::response::Response {
-        tracing::error!("err: {self}");
-        (StatusCode::INTERNAL_SERVER_ERROR, "").into_response()
-    }
-}
 
 pub async fn run(config: &config::Config) -> anyhow::Result<()> {
     let checker = Checker::from_config(config).await?;
@@ -85,7 +25,7 @@ pub async fn run(config: &config::Config) -> anyhow::Result<()> {
     Ok(())
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Checker {
     db: crate::db::Db,
     config: crate::config::Config,
@@ -99,24 +39,24 @@ enum Check {
 }
 
 impl Checker {
-    async fn from_config(config: &config::Config) -> Result<Self, Error> {
-        let db = crate::db::Db::connect(&config.db_path)
-            .await
-            .map_err(Error::DbConnect)?;
-        let mut checks = vec![];
-        for (name, http) in &config.http {
-            let http = Http::build(name, http, &db).await?;
-            checks.push(Check::Http(http));
-        }
-        for (name, ping) in &config.ping {
-            let ping = Ping::build(name, ping, &db).await?;
-            checks.push(Check::Ping(ping));
-        }
-        Ok(Self {
+    async fn from_config(config: &config::Config) -> Result<Self> {
+        let db = crate::db::Db::connect(&config.db_path).await?;
+        let mut checker = Self {
             db,
             config: config.clone(),
-            checks,
-        })
+            checks: vec![],
+        };
+        for (name, http) in &config.http {
+            let id = checker.materialize(name, Kind::Http).await?;
+            let http = Http::build(name, http, id).await?;
+            checker.checks.push(Check::Http(http));
+        }
+        for (name, ping) in &config.ping {
+            let id = checker.materialize(name, Kind::Ping).await?;
+            let ping = Ping::build(name, ping, id).await?;
+            checker.checks.push(Check::Ping(ping));
+        }
+        Ok(checker)
     }
 
     #[instrument(skip_all)]
@@ -133,16 +73,14 @@ impl Checker {
         if let Some(res) = tasks.join_next().await {
             let res = res.context("background task panicked")?;
             match res {
-                Ok(res) => {
-                    bail!("unexpected quit")
-                }
+                Ok(_) => bail!("unexpected quit"),
                 Err(err) => return Err(err),
             }
         }
         Ok(())
     }
 
-    async fn listen(&self) -> Result<(), Error> {
+    async fn listen(&self) -> Result<()> {
         tracing::info!("Starting http listener on {}", self.config.listen);
         let app = axum::Router::new();
         let data = self.clone();
@@ -160,16 +98,14 @@ impl Checker {
         let app = app.nest_service("/", tower_http::services::ServeDir::new("html"));
         let listener = tokio::net::TcpListener::bind(&self.config.listen)
             .await
-            .map_err(Error::BindHttp)?;
+            .context("could not bind http listener")?;
         tracing::info!("Bound http listener on {}", self.config.listen);
-        axum::serve(listener, app)
-            .await
-            .map_err(Error::Axum)
-            .or(Err(Error::HttpQuit))
+        axum::serve(listener, app).await.context("axum failed")?;
+        bail!("http quit unexpectedly");
     }
 
     // fetches data from the sqlite db according to request
-    async fn query(&self, query: api::Query) -> Result<axum::Json<api::Metrics>> {
+    async fn query(&self, _query: api::Query) -> Result<axum::Json<api::Metrics>> {
         let metrics = self
             .with_conn(move |conn| {
                 let mut metrics = Metrics::default();
@@ -209,7 +145,7 @@ impl Checker {
         Ok(resp)
     }
 
-    async fn check_loop(&self) -> Result<(), Error> {
+    async fn check_loop(&self) -> Result<()> {
         loop {
             let now = Instant::now();
             self.check_all().await?;
@@ -219,7 +155,7 @@ impl Checker {
     }
 
     /// runs all of the checks once.
-    async fn check_all(&self) -> Result<(), Error> {
+    async fn check_all(&self) -> Result<()> {
         let mut tasks = JoinSet::default();
         for check in &self.checks {
             let checker = self.clone();
@@ -266,7 +202,7 @@ impl Checker {
         })
         .await;
         match res {
-            Ok(Ok((resp, latency))) => {
+            Ok(Ok((_, latency))) => {
                 tracing::info!("http: ok");
                 self.mark_ok(http.id, latency).await?;
             }
@@ -305,7 +241,7 @@ impl Checker {
         })
         .await;
         match res {
-            Ok(Ok((pkt, latency))) => {
+            Ok(Ok((_, latency))) => {
                 tracing::info!("ping: ok");
                 self.mark_ok(ping.id, latency).await?;
             }
@@ -345,6 +281,36 @@ impl Checker {
         })
         .await?;
         Ok(())
+    }
+
+    async fn materialize(&self, name: &str, kind: Kind) -> Result<u64> {
+        let name = name.to_string();
+        let kind = kind.as_str();
+        self.with_conn(move |conn| {
+            let id = conn
+                .query_row(
+                    "select id from checks where name=?1 and kind=?2",
+                    (&name, kind),
+                    |row| {
+                        let id: u64 = row.get(0)?;
+                        Ok(id)
+                    },
+                )
+                .optional()?;
+            let id = match id {
+                Some(id) => id,
+                None => conn.query_row(
+                    "insert into checks (name, kind) values (?1, ?2) returning id",
+                    (&name, kind),
+                    |row| {
+                        let id: u64 = row.get(0)?;
+                        Ok(id)
+                    },
+                )?,
+            };
+            Ok(id)
+        })
+        .await
     }
 
     async fn with_conn<F, R>(&self, f: F) -> anyhow::Result<R>
@@ -429,12 +395,8 @@ pub enum HttpError {
 }
 
 impl Http {
-    async fn build(name: &str, http: &config::Http, db: &db::Db) -> Result<Self, Error> {
-        let url = reqwest::Url::parse(&http.url).map_err(Error::ParseUrl)?;
-        let id = db
-            .materialize(name, Kind::Http)
-            .await
-            .map_err(Error::Materialize)?;
+    async fn build(name: &str, http: &config::Http, id: u64) -> Result<Self> {
+        let url = reqwest::Url::parse(&http.url).context("could not parse http url")?;
         Ok(Self {
             id,
             name: name.to_string(),
@@ -449,12 +411,6 @@ pub enum CheckResult {
     Err { err: String },
 }
 
-#[derive(Debug)]
-pub struct HttpResult {
-    pub resp: reqwest::Response,
-    pub latency: Duration,
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Ping {
     pub id: u64,
@@ -462,41 +418,12 @@ pub struct Ping {
     pub host: String,
 }
 
-#[derive(Debug, thiserror::Error)]
-pub enum PingError {
-    #[error("could not resolve host '{host}': {err}")]
-    ResolveHost {
-        host: String,
-        #[source]
-        err: io::Error,
-    },
-
-    #[error("no ip found for host '{host}'")]
-    NoIpForHost { host: String },
-
-    #[error("ping failed: {err}")]
-    Ping { err: surge_ping::SurgeError },
-
-    #[error("ping task failed to complete")]
-    TaskTimeout(Elapsed),
-}
-
 impl Ping {
-    async fn build(name: &str, ping: &config::Ping, db: &db::Db) -> Result<Self, Error> {
-        let id = db
-            .materialize(name, Kind::Ping)
-            .await
-            .map_err(Error::Materialize)?;
+    async fn build(name: &str, ping: &config::Ping, id: u64) -> Result<Self> {
         Ok(Self {
             id,
             name: name.to_string(),
             host: ping.host.clone(),
         })
     }
-}
-
-#[derive(Debug)]
-pub struct PingResult {
-    pub packet: surge_ping::IcmpPacket,
-    pub latency: Duration,
 }

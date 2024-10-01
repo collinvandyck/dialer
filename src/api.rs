@@ -1,11 +1,7 @@
 //! Defines types and helpers related to getting data out of the db
 
-use crate::{
-    check,
-    db::{self, record},
-};
+use crate::check;
 use serde::{Deserialize, Serialize};
-use std::time::Duration;
 
 #[derive(Debug, Deserialize, Clone)]
 #[serde(default)]
@@ -50,8 +46,8 @@ impl Metrics {
         self.series
             .iter()
             .enumerate()
-            .find(|(idx, s)| s.name == name && s.kind == kind)
-            .map(|(idx, s)| idx)
+            .find(|(_idx, s)| s.name == name && s.kind == kind)
+            .map(|(idx, _s)| idx)
     }
 }
 
