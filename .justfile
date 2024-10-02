@@ -1,3 +1,6 @@
+bacon:
+    bacon
+
 loop:
     watchexec -r -- sh -c "'cargo run --release'"
 
@@ -5,7 +8,7 @@ db:
     sqlite3 checks.db
 
 clean:
-    rm -f checks.db
+    rm -f checks.db*
 
 watch:
     watchexec \

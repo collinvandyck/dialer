@@ -14,6 +14,14 @@ allow_warnings = true
 background = false
 on_change_strategy = "kill_then_restart"
 
+[jobs.rollup]
+command = [ "sh", "scripts/rollup.sh", ]
+need_stdout = true
+allow_warnings = true
+background = false
+on_change_strategy = "kill_then_restart"
+watch = [ "scripts" ]
+
 [jobs.check]
 command = ["cargo", "check", "--color", "always"]
 need_stdout = false
