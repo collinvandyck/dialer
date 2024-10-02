@@ -28,24 +28,31 @@ fi
 
 
 if [[ "ok" ]];then
-	printf "rolled up results:\n\n"
+	printf "using:\n\n"
 	batsql <(
 		sqlite3 checks.db <<-eos
-			.parameter set @rollup 5
-			.parameter set @secs 30
+		    with params as (
+				select
+					10 as rollup,
+					60 as secs
+			)
 			SELECT
 				r.check_id,
 				c.name,
 				c.kind,
-				r.epoch / @rollup * @rollup AS bucket,
-				time(r.epoch / @rollup * @rollup, 'unixepoch') as time,
-				CAST(AVG(r.ms) as INTEGER) AS avg_ms,
-				COUNT(r.err) AS errors,
-				COUNT(r.ms) AS measures
+				r.epoch / p.rollup * p.rollup AS bucket,
+				datetime(r.epoch / p.rollup * p.rollup, 'unixepoch') as time,
+				CAST(MIN(r.ms) as INTEGER) AS min,
+				CAST(AVG(r.ms) as INTEGER) AS avg,
+				CAST(MAX(r.ms) as INTEGER) AS max,
+				COUNT(*) AS count,
+				COUNT(r.err) AS errs
 			FROM results r
+			JOIN params AS p
 			JOIN checks c on r.check_id = c.id
-			WHERE r.epoch >= strftime('%s', 'now') - @secs
+			WHERE bucket >= (strftime('%s', 'now')) - p.secs
 			GROUP BY r.check_id, c.name, c.kind, bucket
+			ORDER BY bucket, name, kind
 			eos
 		)
 fi
