@@ -1,5 +1,5 @@
 queries:
-    hwatch -n 2 -t scripts/rollup.sh
+    viddy -n 1 scripts/rollup.sh
 
 bacon:
     bacon

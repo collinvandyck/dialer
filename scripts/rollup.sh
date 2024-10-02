@@ -4,7 +4,7 @@
 # shellcheck disable=all
 
 batsql() {
-	bat -f -l sql --theme base16 -P "$@"
+	bat -f -l sql -P "$@"
 }
 
 if [[ "ok" ]];then
