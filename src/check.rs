@@ -82,6 +82,17 @@ impl Checker {
 
     async fn listen(&self) -> Result<()> {
         tracing::info!("Starting http listener on {}", self.config.listen);
+
+        fn into_resp<T: IntoResponse>(v: Result<T>) -> axum::response::Response {
+            match v {
+                Ok(v) => v.into_response(),
+                Err(err) => {
+                    tracing::error!("handler failed: {err:?}");
+                    (StatusCode::INTERNAL_SERVER_ERROR, "").into_response()
+                }
+            }
+        }
+
         let app = axum::Router::new()
             .route(
                 "/query",
@@ -96,12 +107,26 @@ impl Checker {
                 }),
             )
             .route(
-                "/app",
+                "/clicked",
                 routing::get({
                     let _checker = self.clone();
                     move || async move {
                         // test
-                        "<h1>hello</h1>"
+                        let resp = anyhow::Ok("<h1>hello</h1>");
+                        let resp = into_resp(resp);
+                        resp
+                    }
+                }),
+            )
+            .route(
+                "/changed",
+                routing::get({
+                    let _checker = self.clone();
+                    move || async move {
+                        // test
+                        tracing::info!("on changed!!");
+                        tokio::time::sleep(Duration::from_millis(500)).await;
+                        format!("{:?}", Instant::now())
                     }
                 }),
             )

@@ -1,0 +1,44 @@
+<!doctype html>
+<html>
+    <head>
+    </head>
+    <body>
+        <div id="parent-div">
+            <button
+                hx-get="/changed"
+                hx-trigger="click"
+                hx-target="#child-div"
+                hx-swap="innerHTML"
+                hx-indicator="#clickmeindicator"
+                hx-disabled-elt="input[type='text'], this"
+            >
+                Click Me!
+            </button>
+            <span id="clickmeindicator" class="htmx-indicator">loading...</span>
+            <div id="child-div"></div>
+        </div>
+        <p/>
+        <div>
+            <input
+                type="text"
+                id="q"
+                placeholder="foo"
+                hx-get="/changed"
+                hx-trigger="keyup changed delay:10ms"
+                hx-target="#searchresults"
+                hx-swap="innerHTML"
+            />
+            <p>
+            Results
+            <div id="searchresults">
+                hi
+            </div>
+            </p>
+        </div>
+
+        <script
+            src="https://unpkg.com/htmx.org@2.0.2"
+            integrity="sha384-Y7hw+L/jvKeWIRRkqWYfPcvVxHzVzn5REgzbawhxAuQGwX1XWe70vji+VSeHOThJ"
+            crossorigin="anonymous"></script>
+    </body>
+</html>
