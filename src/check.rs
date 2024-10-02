@@ -82,20 +82,31 @@ impl Checker {
 
     async fn listen(&self) -> Result<()> {
         tracing::info!("Starting http listener on {}", self.config.listen);
-        let app = axum::Router::new();
-        let data = self.clone();
-        let app = app.route(
-            "/query",
-            routing::get(
-                |extract::Query(query): extract::Query<api::Query>| async move {
-                    data.query(query).await.map_err(|err| {
-                        tracing::error!("handler failed: {err:?}");
-                        (StatusCode::INTERNAL_SERVER_ERROR, "").into_response()
-                    })
-                },
-            ),
-        );
-        let app = app.nest_service("/", tower_http::services::ServeDir::new("html"));
+        let app = axum::Router::new()
+            .route(
+                "/query",
+                routing::get({
+                    let checker = self.clone();
+                    move |extract::Query(query): extract::Query<api::Query>| async move {
+                        checker.handle_query(query).await.map_err(|err| {
+                            tracing::error!("handler failed: {err:?}");
+                            (StatusCode::INTERNAL_SERVER_ERROR, "").into_response()
+                        })
+                    }
+                }),
+            )
+            .route(
+                "/app",
+                routing::get({
+                    let _checker = self.clone();
+                    move || async move {
+                        // test
+                        "<h1>hello</h1>"
+                    }
+                }),
+            )
+            .nest_service("/", tower_http::services::ServeDir::new("html"));
+
         let listener = tokio::net::TcpListener::bind(&self.config.listen)
             .await
             .context("could not bind http listener")?;
@@ -105,7 +116,7 @@ impl Checker {
     }
 
     // fetches data from the sqlite db according to request
-    async fn query(&self, _query: api::Query) -> Result<axum::Json<api::Metrics>> {
+    async fn handle_query(&self, _query: api::Query) -> Result<axum::Json<api::Metrics>> {
         let metrics = self
             .with_conn(move |conn| {
                 let mut metrics = Metrics::default();

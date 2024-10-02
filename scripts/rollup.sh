@@ -4,7 +4,7 @@
 # shellcheck disable=all
 
 batsql() {
-	bat -f -l sql -P "$@"
+	bat -f -l sql -P --theme 'Monokai Extended' "$@"
 }
 
 if [[ "ok" ]];then
@@ -28,7 +28,7 @@ fi
 
 
 if [[ "ok" ]];then
-	printf "using:\n\n"
+	printf "CTE rollup:\n\n"
 	batsql <(
 		sqlite3 checks.db <<-eos
 		    with params as (
