@@ -1,3 +1,6 @@
+queries:
+    hwatch -n 2 -t scripts/rollup.sh
+
 bacon:
     bacon
 
