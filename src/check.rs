@@ -245,7 +245,6 @@ impl Checker {
         .await;
         match res {
             Ok(Ok((_, latency))) => {
-                tracing::info!("http: ok");
                 self.mark_ok(http.id, latency).await?;
             }
             Ok(Err(err)) => {
@@ -284,7 +283,6 @@ impl Checker {
         .await;
         match res {
             Ok(Ok((_, latency))) => {
-                tracing::info!("ping: ok");
                 self.mark_ok(ping.id, latency).await?;
             }
             Ok(Err(err)) => {
