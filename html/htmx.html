@@ -19,8 +19,10 @@
         </div>
         <p/>
         <div>
+            <form>
             <input
                 type="text"
+                name="my-text-field"
                 id="q"
                 placeholder="foo"
                 hx-get="/changed"
@@ -28,12 +30,20 @@
                 hx-target="#searchresults"
                 hx-swap="innerHTML"
             />
+            </form>
             <p>
             Results
             <div id="searchresults">
                 hi
             </div>
             </p>
+        </div>
+
+        <div>
+            <div id="message"
+                hx-get="/changed"
+                hx-swap-oob="true">Swap me directly!</div>
+            Additional Content
         </div>
 
         <script

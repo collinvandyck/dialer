@@ -125,8 +125,14 @@ impl Checker {
                     move || async move {
                         // test
                         tracing::info!("on changed!!");
-                        tokio::time::sleep(Duration::from_millis(500)).await;
-                        format!("{:?}", Instant::now())
+                        tokio::time::sleep(Duration::from_millis(50)).await;
+                        format!(
+                            r#"
+                            <div id="message" hx-swap-oob="true">ok!</div>
+                            {:?}
+                            "#,
+                            Instant::now()
+                        )
                     }
                 }),
             )
