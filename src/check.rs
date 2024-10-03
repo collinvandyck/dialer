@@ -19,12 +19,6 @@ use crate::{
     config, db,
 };
 
-pub async fn run(config: &config::Config) -> anyhow::Result<()> {
-    let checker = Checker::from_config(config).await?;
-    checker.run().await?;
-    Ok(())
-}
-
 #[derive(Clone, Debug)]
 pub struct Checker {
     db: crate::db::Db,
@@ -39,8 +33,7 @@ enum Check {
 }
 
 impl Checker {
-    async fn from_config(config: &config::Config) -> Result<Self> {
-        let db = crate::db::Db::connect(&config.db_path).await?;
+    pub async fn new(db: db::Db, config: &config::Config) -> Result<Self> {
         let mut checker = Self {
             db,
             config: config.clone(),

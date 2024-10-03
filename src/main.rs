@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 use clap::Parser;
-use dialer::{check, config::Config};
+use dialer::{app::App, config::Config};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
 #[derive(clap::Parser)]
@@ -23,6 +23,7 @@ async fn main() -> anyhow::Result<()> {
         .init();
     let args = Args::parse();
     let config = Config::from_path(&args.config).await?;
-    check::run(&config).await?;
+    let app = App::new(&config).await?;
+    app.run().await?;
     Ok(())
 }
