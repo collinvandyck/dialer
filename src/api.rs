@@ -1,7 +1,19 @@
 //! Defines types and helpers related to getting data out of the db
 
-use crate::check;
+use crate::{check, db};
+use anyhow::Result;
 use serde::{Deserialize, Serialize};
+
+#[derive(Clone)]
+pub struct Api {
+    db: db::Db,
+}
+
+impl Api {
+    pub fn new(db: db::Db) -> Result<Self> {
+        Ok(Self { db })
+    }
+}
 
 #[derive(Debug, Deserialize, Clone)]
 #[serde(default)]
