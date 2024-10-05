@@ -1,7 +1,6 @@
-use std::path::PathBuf;
-
 use clap::Parser;
 use dialer::{app::App, config::Config};
+use std::path::PathBuf;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
 #[derive(clap::Parser)]
