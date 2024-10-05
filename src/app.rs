@@ -1,6 +1,6 @@
 use crate::{
     api::Api,
-    check::{self, Checker},
+    checker::{self, Checker},
     config,
     db::Db,
 };
@@ -11,7 +11,7 @@ use tokio::task::JoinSet;
 pub struct App {
     db: Db,
     api: Api,
-    checker: check::Checker,
+    checker: checker::Checker,
 }
 
 impl App {

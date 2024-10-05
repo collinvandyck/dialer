@@ -2,7 +2,7 @@
 
 use std::time::Duration;
 
-use crate::{check, db};
+use crate::{checker, db};
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 
@@ -44,7 +44,7 @@ pub struct Metrics {
 }
 
 impl Metrics {
-    pub fn get_mut(&mut self, name: &str, kind: check::Kind) -> &mut Series {
+    pub fn get_mut(&mut self, name: &str, kind: checker::Kind) -> &mut Series {
         let pos = self.find_pos(name, kind);
         let idx = match pos {
             Some(idx) => idx,
@@ -61,7 +61,7 @@ impl Metrics {
         &mut self.series[idx]
     }
 
-    fn find_pos(&self, name: &str, kind: check::Kind) -> Option<usize> {
+    fn find_pos(&self, name: &str, kind: checker::Kind) -> Option<usize> {
         self.series
             .iter()
             .enumerate()
@@ -72,7 +72,7 @@ impl Metrics {
 
 #[derive(Debug, Serialize)]
 pub struct Series {
-    pub kind: check::Kind,
+    pub kind: checker::Kind,
     pub name: String,
     pub values: Vec<TimeValue>,
 }
