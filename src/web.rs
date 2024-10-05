@@ -83,18 +83,6 @@ where
     }
 }
 
-struct Rollup {
-    id: u64,
-    name: String,
-    kind: String,
-    bucket: u64,
-    min: u64,
-    avg: u64,
-    max: u64,
-    count: usize,
-    errs: usize,
-}
-
 trait DateTimeExt {
     fn epoch_secs(&self) -> Result<u64>;
 }
@@ -107,11 +95,11 @@ impl DateTimeExt for DateTime<Utc> {
 
 trait DurationExt {
     // the resolution of a rollup is based on the duration of the window
-    fn window_resolution(&self) -> Duration;
+    fn resolution(&self) -> Duration;
 }
 
 impl DurationExt for Duration {
-    fn window_resolution(&self) -> Duration {
+    fn resolution(&self) -> Duration {
         // for a 10m window use a 1s resolution
         if *self <= Duration::from_secs(60 * 10) {
             return Duration::from_secs(1);
@@ -137,7 +125,7 @@ async fn handle_metrics(
         return Err(ServerError::InvalidEndDate);
     }
     let window = (end - start).to_std()?;
-    let resolution = window.window_resolution();
+    let resolution = window.resolution();
     let metrics = db
         .with_conn(move |conn| {
             let mut metrics = Metrics::default();
@@ -169,6 +157,17 @@ async fn handle_metrics(
                 ":start_time": start,
                 ":end_time": end,
             };
+            struct Rollup {
+                id: u64,
+                name: String,
+                kind: String,
+                bucket: u64,
+                min: u64,
+                avg: u64,
+                max: u64,
+                count: usize,
+                errs: usize,
+            }
             let rows = rows.query_map(params, |row| {
                 Ok(Rollup {
                     id: row.get("check_id")?,
