@@ -4,7 +4,7 @@ use crate::{checker, config::Config, db};
 use anyhow::{bail, Context, Result};
 use axum::{
     extract::{Query, State},
-    response::{IntoResponse, Response},
+    response::{Html, IntoResponse, Response},
     routing, Json,
 };
 use chrono::{DateTime, Utc};
@@ -35,6 +35,7 @@ impl Server {
         info!("Starting http listener on {}", self.config.listen);
         let router = axum::Router::new()
             .route("/query", routing::get(handle_metrics))
+            .route("/askama", routing::get(handle_askama))
             .nest_service("/", ServeDir::new("html"))
             .with_state(self.clone());
         let listener = tokio::net::TcpListener::bind(&self.config.listen)
@@ -49,6 +50,7 @@ impl Server {
 enum ServerError {
     Anyhow(anyhow::Error),
     InvalidEndDate,
+    Askama(askama::Error),
 }
 
 impl IntoResponse for ServerError {
@@ -64,6 +66,10 @@ impl IntoResponse for ServerError {
             Self::InvalidEndDate => {
                 tracing::warn!("Invalid end date");
                 (StatusCode::BAD_REQUEST, "end date must be after start date").into_response()
+            }
+            Self::Askama(err) => {
+                tracing::error!("askama: {err}");
+                StatusCode::INTERNAL_SERVER_ERROR.into_response()
             }
         }
     }
@@ -102,6 +108,33 @@ impl DurationExt for Duration {
         // fallback of 5s resolution
         Duration::from_secs(5)
     }
+}
+
+trait AskamaExt {
+    fn to_html(&self) -> Result<Html<String>, ServerError>;
+}
+
+impl<T: askama::Template> AskamaExt for T {
+    fn to_html(&self) -> Result<Html<String>, ServerError> {
+        self.render().map_err(ServerError::Askama).map(Html)
+    }
+}
+
+mod templates {
+    use askama::Template;
+
+    #[derive(Template)]
+    #[template(path = "../templates/index.html")]
+    pub struct Index {
+        pub name: String,
+    }
+}
+
+async fn handle_askama() -> Result<impl IntoResponse, ServerError> {
+    let template = templates::Index {
+        name: String::from("Collin"),
+    };
+    template.to_html()
 }
 
 #[instrument(skip_all)]
