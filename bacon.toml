@@ -5,10 +5,10 @@
 # You can also check bacon's own bacon.toml file
 #  as an example: https://github.com/Canop/bacon/blob/main/bacon.toml
 
-default_job = "dev"
+default_job = "loop"
 
-[jobs.dev]
-command = [ "sh", "scripts/dev.sh" ]
+[jobs.loop]
+command = [ "scripts/loop.sh", "--clean" ]
 need_stdout = true
 allow_warnings = true
 background = false

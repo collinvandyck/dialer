@@ -18,7 +18,7 @@ impl App {
     pub async fn new(config: &config::Config) -> Result<Self> {
         let db = Db::connect(&config.db_path).await?;
         let checker = Checker::new(db.clone(), config).await?;
-        let api = Api::new(db.clone())?;
+        let api = Api::new(config, db.clone())?;
         Ok(Self { db, api, checker })
     }
 

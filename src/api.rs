@@ -2,23 +2,49 @@
 
 use std::time::Duration;
 
-use crate::{checker, db};
-use anyhow::Result;
+use crate::{
+    checker,
+    config::{self, Config},
+    db,
+};
+use anyhow::{bail, Context, Result};
+use axum::routing;
 use serde::{Deserialize, Serialize};
+use tower_http::services::ServeDir;
+use tracing::{info, instrument};
 
 #[derive(Clone)]
 pub struct Api {
+    config: Config,
     db: db::Db,
 }
 
 impl Api {
-    pub fn new(db: db::Db) -> Result<Self> {
-        Ok(Self { db })
+    pub fn new(config: &Config, db: db::Db) -> Result<Self> {
+        Ok(Self {
+            config: config.clone(),
+            db,
+        })
     }
 
+    #[instrument(skip_all)]
     pub async fn run(&self) -> Result<()> {
-        tokio::time::sleep(Duration::MAX).await;
-        Ok(())
+        info!("Starting http listener on {}", self.config.listen);
+        let router = axum::Router::new()
+            .route(
+                "/query",
+                routing::get({
+                    //
+                    || async { "hello world!" }
+                }),
+            )
+            .nest_service("/", ServeDir::new("html"));
+        let listener = tokio::net::TcpListener::bind(&self.config.listen)
+            .await
+            .context("could not bind http listener")?;
+        info!("Bound http listener to {}", self.config.listen);
+        axum::serve(listener, router).await.context("axum failed")?;
+        bail!("axum quit unexpectedly");
     }
 }
 

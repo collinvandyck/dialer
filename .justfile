@@ -1,11 +1,8 @@
 queries:
     viddy -n 1 scripts/rollup.sh
 
-bacon:
-    bacon
-
 loop:
-    watchexec -r -- sh -c "'cargo run --release'"
+    bacon dev
 
 db:
     sqlite3 checks.db
