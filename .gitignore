@@ -26,3 +26,4 @@ Cargo.lock
 
 /checks.db*
 /we.log
+query.out*

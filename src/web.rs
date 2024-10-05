@@ -1,5 +1,3 @@
-//! Defines types and helpers related to getting data out of the db
-
 use crate::{checker, config::Config, db};
 use anyhow::{bail, Context, Result};
 use axum::{
@@ -35,7 +33,6 @@ impl Server {
         info!("Starting http listener on {}", self.config.listen);
         let router = axum::Router::new()
             .route("/query", routing::get(handle_metrics))
-            .route("/askama", routing::get(handle_askama))
             .route("/old", routing::get(handle_old_index))
             .route("/", routing::get(handle_index))
             .fallback_service(ServeDir::new("html"))
@@ -136,34 +133,20 @@ mod tmpl {
 
     #[derive(Template)]
     #[template(path = "../templates/old-index.html")]
-    pub struct OldIndex {}
-
-    #[derive(Template)]
-    #[template(path = "../templates/askama.html")]
-    pub struct Askama {
-        pub name: String,
-    }
+    pub struct OldIndex;
 }
 
 #[instrument(skip_all)]
-async fn handle_askama() -> Result<impl IntoResponse, ServerError> {
-    info!("Rendering template");
-    let template = tmpl::Askama {
-        name: String::from("Collin"),
-    };
-    Ok(HtmlTemplate(template))
-}
-
 async fn handle_index() -> Result<impl IntoResponse, ServerError> {
     info!("Rendering index");
     let template = tmpl::Index {};
     Ok(HtmlTemplate(template))
 }
 
+#[instrument(skip_all)]
 async fn handle_old_index() -> Result<impl IntoResponse, ServerError> {
     info!("Rendering old index");
-    let template = tmpl::OldIndex {};
-    Ok(HtmlTemplate(template))
+    Ok(HtmlTemplate(tmpl::OldIndex))
 }
 
 #[instrument(skip_all)]
@@ -227,9 +210,9 @@ async fn handle_metrics(
                 name: String,
                 kind: String,
                 bucket: i64,
-                min: u64,
-                avg: u64,
-                max: u64,
+                min: Option<u64>,
+                avg: Option<u64>,
+                max: Option<u64>,
                 count: usize,
                 errs: usize,
             }
@@ -254,11 +237,15 @@ async fn handle_metrics(
                 let series = metrics.get_mut(&row.name, kind);
                 let ts = DateTime::from_timestamp(row.bucket, 0)
                     .context("could not convert epoch to timestamp")?;
+
+                // TODO: we should be using None for avg/min/max if there are no valid samples when
+                // the series was only erroring out during this bucket. When we get a proper
+                // rendering FE in place this should change to not rendering these values.
                 series.values.push(TimeValue {
                     ts,
-                    avg: row.avg,
-                    min: row.min,
-                    max: row.max,
+                    avg: row.avg.unwrap_or_default(),
+                    min: row.min.unwrap_or_default(),
+                    max: row.max.unwrap_or_default(),
                     count: row.count,
                     errs: row.errs,
                 });
