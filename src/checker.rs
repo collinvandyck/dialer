@@ -1,23 +1,17 @@
+use crate::{config, db};
+use anyhow::{anyhow, bail, Context, Result};
+use r2d2::PooledConnection;
+use r2d2_sqlite::SqliteConnectionManager;
+use reqwest::Method;
+use rusqlite::OptionalExtension;
+use serde::Serialize;
 use std::{
     fmt::Display,
     net::IpAddr,
     time::{Duration, Instant},
 };
-
-use anyhow::{anyhow, bail, Context, Result};
-use axum::{extract, response::IntoResponse, routing};
-use r2d2::PooledConnection;
-use r2d2_sqlite::SqliteConnectionManager;
-use reqwest::{Method, StatusCode};
-use rusqlite::OptionalExtension;
-use serde::Serialize;
 use tokio::{task::JoinSet, time::error::Elapsed};
 use tracing::instrument;
-
-use crate::{
-    config, db,
-    web::{self, Metrics},
-};
 
 #[derive(Clone, Debug)]
 pub struct Checker {

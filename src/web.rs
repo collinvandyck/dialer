@@ -1,22 +1,17 @@
 //! Defines types and helpers related to getting data out of the db
 
-use std::time::Duration;
-
-use crate::{
-    checker,
-    config::{self, Config},
-    db,
-};
-use anyhow::{anyhow, bail, Context, Result};
+use crate::{checker, config::Config, db};
+use anyhow::{bail, Context, Result};
 use axum::{
-    extract::{self, Query, State},
+    extract::{Query, State},
     response::{IntoResponse, Response},
     routing, Json,
 };
 use chrono::{DateTime, Utc};
 use reqwest::StatusCode;
-use rusqlite::{named_params, params};
+use rusqlite::named_params;
 use serde::{Deserialize, Serialize};
+use std::time::Duration;
 use tower_http::services::ServeDir;
 use tracing::{info, instrument};
 
@@ -111,7 +106,7 @@ impl DurationExt for Duration {
 
 #[instrument(skip_all)]
 async fn handle_metrics(
-    State(Server { config, db }): State<Server>,
+    State(Server { config: _, db }): State<Server>,
     Query(mut query): Query<MetricsQuery>,
 ) -> Result<Json<Metrics>, ServerError> {
     let now = Utc::now();
@@ -157,6 +152,7 @@ async fn handle_metrics(
                 ":start_time": start,
                 ":end_time": end,
             };
+            #[allow(unused)]
             struct Rollup {
                 id: u64,
                 name: String,
