@@ -123,7 +123,14 @@ async fn handle_metrics(
     let resolution = window.resolution();
     let metrics = db
         .with_conn(move |conn| {
-            let mut metrics = Metrics::default();
+            let mut metrics = Metrics {
+                meta: Meta {
+                    res: resolution.as_secs(),
+                    start,
+                    end,
+                },
+                ..Default::default()
+            };
             let mut rows = conn.prepare_cached(
                 "
                     SELECT
@@ -234,7 +241,15 @@ impl Default for MetricsQuery {
 
 #[derive(Debug, Serialize, Default)]
 pub struct Metrics {
+    meta: Meta,
     pub series: Vec<Series>,
+}
+
+#[derive(Debug, Serialize, Default)]
+struct Meta {
+    res: u64,
+    start: DateTime<Utc>,
+    end: DateTime<Utc>,
 }
 
 impl Metrics {
