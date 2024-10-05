@@ -36,7 +36,8 @@ impl Server {
         let router = axum::Router::new()
             .route("/query", routing::get(handle_metrics))
             .route("/askama", routing::get(handle_askama))
-            .nest_service("/", ServeDir::new("html"))
+            .route("/", routing::get(handle_index))
+            .fallback_service(ServeDir::new("html"))
             .with_state(self.clone());
         let listener = tokio::net::TcpListener::bind(&self.config.listen)
             .await
@@ -110,31 +111,48 @@ impl DurationExt for Duration {
     }
 }
 
-trait AskamaExt {
-    fn to_html(&self) -> Result<Html<String>, ServerError>;
-}
+struct HtmlTemplate<T>(T);
 
-impl<T: askama::Template> AskamaExt for T {
-    fn to_html(&self) -> Result<Html<String>, ServerError> {
-        self.render().map_err(ServerError::Askama).map(Html)
+impl<T> IntoResponse for HtmlTemplate<T>
+where
+    T: askama::Template,
+{
+    fn into_response(self) -> Response {
+        self.0
+            .render()
+            .map(Html)
+            .map_err(ServerError::Askama)
+            .into_response()
     }
 }
 
-mod templates {
+mod tmpl {
     use askama::Template;
 
     #[derive(Template)]
     #[template(path = "../templates/index.html")]
-    pub struct Index {
+    pub struct Index {}
+
+    #[derive(Template)]
+    #[template(path = "../templates/askama.html")]
+    pub struct Askama {
         pub name: String,
     }
 }
 
+#[instrument(skip_all)]
 async fn handle_askama() -> Result<impl IntoResponse, ServerError> {
-    let template = templates::Index {
+    info!("Rendering template");
+    let template = tmpl::Askama {
         name: String::from("Collin"),
     };
-    template.to_html()
+    Ok(HtmlTemplate(template))
+}
+
+async fn handle_index() -> Result<impl IntoResponse, ServerError> {
+    info!("Rendering index");
+    let template = tmpl::Index {};
+    Ok(HtmlTemplate(template))
 }
 
 #[instrument(skip_all)]
