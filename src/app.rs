@@ -4,7 +4,8 @@ use crate::{
     config,
     db::Db,
 };
-use anyhow::Result;
+use anyhow::{anyhow, bail, Context, Result};
+use tokio::task::JoinSet;
 
 #[derive(Clone)]
 pub struct App {
@@ -22,8 +23,27 @@ impl App {
     }
 
     pub async fn run(&self) -> Result<()> {
-        let app = self.clone();
-        self.checker.run().await?;
-        Ok(())
+        let mut js = JoinSet::new();
+        js.spawn(self.clone().run_checker());
+        js.spawn(self.clone().run_api());
+        match js.join_next().await {
+            Some(Ok(err)) => bail!(err),
+            Some(Err(je)) => bail!("panic! {je:#}"),
+            None => Ok(()),
+        }
+    }
+
+    async fn run_api(self) -> anyhow::Error {
+        match self.api.run().await {
+            Ok(()) => anyhow!("api quit unexpectedly"),
+            Err(err) => err.context("api failed"),
+        }
+    }
+
+    async fn run_checker(self) -> anyhow::Error {
+        match self.checker.run().await {
+            Ok(()) => anyhow!("checker quit unexpectedly"),
+            Err(err) => err.context("checker failed"),
+        }
     }
 }

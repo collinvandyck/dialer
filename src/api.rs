@@ -1,5 +1,7 @@
 //! Defines types and helpers related to getting data out of the db
 
+use std::time::Duration;
+
 use crate::{check, db};
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
@@ -12,6 +14,11 @@ pub struct Api {
 impl Api {
     pub fn new(db: db::Db) -> Result<Self> {
         Ok(Self { db })
+    }
+
+    pub async fn run(&self) -> Result<()> {
+        tokio::time::sleep(Duration::MAX).await;
+        Ok(())
     }
 }
 
