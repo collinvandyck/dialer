@@ -13,13 +13,14 @@ use serde::{Deserialize, Serialize};
 use tower_http::services::ServeDir;
 use tracing::{info, instrument};
 
+/// handles web serving and api requests
 #[derive(Clone)]
-pub struct Api {
+pub struct Server {
     config: Config,
     db: db::Db,
 }
 
-impl Api {
+impl Server {
     pub fn new(config: &Config, db: db::Db) -> Result<Self> {
         Ok(Self {
             config: config.clone(),

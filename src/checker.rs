@@ -15,8 +15,8 @@ use tokio::{task::JoinSet, time::error::Elapsed};
 use tracing::instrument;
 
 use crate::{
-    api::{self, Metrics},
     config, db,
+    web::{self, Metrics},
 };
 
 #[derive(Clone, Debug)]
@@ -54,23 +54,7 @@ impl Checker {
 
     #[instrument(skip_all)]
     pub async fn run(&self) -> anyhow::Result<()> {
-        let mut tasks = JoinSet::default();
-        {
-            let checker = self.clone();
-            tasks.spawn(async move { checker.listen().await.context("listener failed") });
-        }
-        {
-            let checker = self.clone();
-            tasks.spawn(async move { checker.check_loop().await.context("checker failed") });
-        }
-        if let Some(res) = tasks.join_next().await {
-            let res = res.context("background task panicked")?;
-            match res {
-                Ok(_) => bail!("unexpected quit"),
-                Err(err) => return Err(err),
-            }
-        }
-        Ok(())
+        self.check_loop().await
     }
 
     async fn listen(&self) -> Result<()> {
@@ -91,7 +75,7 @@ impl Checker {
                 "/query",
                 routing::get({
                     let checker = self.clone();
-                    move |extract::Query(query): extract::Query<api::Query>| async move {
+                    move |extract::Query(query): extract::Query<web::Query>| async move {
                         checker.handle_query(query).await.map_err(|err| {
                             tracing::error!("handler failed: {err:?}");
                             (StatusCode::INTERNAL_SERVER_ERROR, "").into_response()
@@ -140,7 +124,7 @@ impl Checker {
     }
 
     // fetches data from the sqlite db according to request
-    async fn handle_query(&self, _query: api::Query) -> Result<axum::Json<api::Metrics>> {
+    async fn handle_query(&self, _query: web::Query) -> Result<axum::Json<web::Metrics>> {
         let metrics = self
             .with_conn(move |conn| {
                 let mut metrics = Metrics::default();
@@ -166,7 +150,7 @@ impl Checker {
                     let series = metrics.get_mut(&row.name, kind);
                     let ts = chrono::DateTime::from_timestamp(row.epoch as i64, 0)
                         .context("could not convert epoch to timestamp")?;
-                    series.values.push(api::TimeValue {
+                    series.values.push(web::TimeValue {
                         ts,
                         latency_ms: Some(row.ms),
                         err: None,

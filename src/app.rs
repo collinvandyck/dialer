@@ -1,8 +1,8 @@
 use crate::{
-    api::Api,
     checker::{self, Checker},
     config,
     db::Db,
+    web::Server,
 };
 use anyhow::{anyhow, bail, Context, Result};
 use tokio::task::JoinSet;
@@ -10,7 +10,7 @@ use tokio::task::JoinSet;
 #[derive(Clone)]
 pub struct App {
     db: Db,
-    api: Api,
+    api: Server,
     checker: checker::Checker,
 }
 
@@ -18,7 +18,7 @@ impl App {
     pub async fn new(config: &config::Config) -> Result<Self> {
         let db = Db::connect(&config.db_path).await?;
         let checker = Checker::new(db.clone(), config).await?;
-        let api = Api::new(config, db.clone())?;
+        let api = Server::new(config, db.clone())?;
         Ok(Self { db, api, checker })
     }
 
