@@ -2,7 +2,7 @@ queries:
     viddy -n 1 scripts/rollup.sh
 
 loop:
-    bacon dev
+    bacon loop
 
 db:
     sqlite3 checks.db

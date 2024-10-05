@@ -41,7 +41,7 @@
                 // Process the data
                 const allValues = data.series.flatMap(s => s.values);
                 const timeExtent = d3.extent(allValues, d => new Date(d.ts));
-                const msExtent = d3.extent(allValues, d => d.ms);
+                const msExtent = d3.extent(allValues, d => d.avg);
 
                 // Create scales
                 const xScale = d3.scaleTime()
@@ -82,7 +82,7 @@
                 // Create line generator
                 const line = d3.line()
                     .x(d => xScale(new Date(d.ts)))
-                    .y(d => yScale(d.ms));
+                    .y(d => yScale(d.avg));
 
                 // Create color scale
                 const colorScale = d3.scaleOrdinal(d3.schemeCategory10);

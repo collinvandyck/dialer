@@ -157,36 +157,41 @@ async fn handle_metrics(
                 id: u64,
                 name: String,
                 kind: String,
-                bucket: u64,
+                bucket: i64,
                 min: u64,
                 avg: u64,
                 max: u64,
                 count: usize,
                 errs: usize,
             }
-            let rows = rows.query_map(params, |row| {
-                Ok(Rollup {
-                    id: row.get("check_id")?,
-                    name: row.get("name")?,
-                    kind: row.get("kind")?,
-                    bucket: row.get("bucket")?,
-                    min: row.get("min")?,
-                    max: row.get("max")?,
-                    avg: row.get("avg")?,
-                    count: row.get("count")?,
-                    errs: row.get("errs")?,
+            let rows = rows
+                .query_map(params, |row| {
+                    Ok(Rollup {
+                        id: row.get("check_id")?,
+                        name: row.get("name")?,
+                        kind: row.get("kind")?,
+                        bucket: row.get("bucket")?,
+                        min: row.get("min")?,
+                        max: row.get("max")?,
+                        avg: row.get("avg")?,
+                        count: row.get("count")?,
+                        errs: row.get("errs")?,
+                    })
                 })
-            })?;
+                .context("query failed")?;
             for row in rows {
                 let row = row?;
                 let kind = checker::Kind::try_from(row.kind.as_str())?;
                 let series = metrics.get_mut(&row.name, kind);
-                let ts = chrono::DateTime::from_timestamp(row.bucket as i64, 0)
+                let ts = DateTime::from_timestamp(row.bucket, 0)
                     .context("could not convert epoch to timestamp")?;
                 series.values.push(TimeValue {
                     ts,
-                    ms: Some(row.avg),
-                    err: None,
+                    avg: row.avg,
+                    min: row.min,
+                    max: row.max,
+                    count: row.count,
+                    errs: row.errs,
                 });
             }
             Ok(metrics)
@@ -269,11 +274,11 @@ pub struct Series {
 #[derive(Debug, Serialize)]
 pub struct TimeValue {
     pub ts: DateTime<Utc>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    #[serde(rename = "ms")]
-    pub ms: Option<u64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub err: Option<Error>,
+    pub count: usize,
+    pub errs: usize,
+    pub avg: u64,
+    pub min: u64,
+    pub max: u64,
 }
 
 #[derive(Debug, Serialize)]
