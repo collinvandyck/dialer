@@ -105,6 +105,22 @@ impl DateTimeExt for DateTime<Utc> {
     }
 }
 
+trait DurationExt {
+    // the resolution of a rollup is based on the duration of the window
+    fn window_resolution(&self) -> Duration;
+}
+
+impl DurationExt for Duration {
+    fn window_resolution(&self) -> Duration {
+        // for a 10m window use a 1s resolution
+        if *self <= Duration::from_secs(60 * 10) {
+            return Duration::from_secs(1);
+        }
+        // fallback of 5s resolution
+        Duration::from_secs(5)
+    }
+}
+
 #[instrument(skip_all)]
 async fn handle_metrics(
     State(Server { config, db }): State<Server>,
@@ -115,15 +131,13 @@ async fn handle_metrics(
         query.start = Some(now - last);
         query.end = Some(now);
     };
-    let start = query
-        .start
-        .unwrap_or_else(|| now - Duration::from_secs(3600));
+    let start = query.start.unwrap_or(now - Duration::from_secs(3600));
     let end = query.end.unwrap_or(now);
     if end <= start {
         return Err(ServerError::InvalidEndDate);
     }
     let window = (end - start).to_std()?;
-    let resolution_secs = 5;
+    let resolution = window.window_resolution();
     let metrics = db
         .with_conn(move |conn| {
             let mut metrics = Metrics::default();
@@ -151,7 +165,7 @@ async fn handle_metrics(
             let start = start.epoch_secs()?;
             let end = end.epoch_secs()?;
             let params = named_params! {
-                ":rollup": resolution_secs,
+                ":rollup": resolution.as_secs(),
                 ":start_time": start,
                 ":end_time": end,
             };
