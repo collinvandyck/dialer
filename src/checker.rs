@@ -75,7 +75,7 @@ impl Checker {
                 "/query",
                 routing::get({
                     let checker = self.clone();
-                    move |extract::Query(query): extract::Query<web::Query>| async move {
+                    move |extract::Query(query): extract::Query<web::MetricsQuery>| async move {
                         checker.handle_query(query).await.map_err(|err| {
                             tracing::error!("handler failed: {err:?}");
                             (StatusCode::INTERNAL_SERVER_ERROR, "").into_response()
@@ -124,7 +124,7 @@ impl Checker {
     }
 
     // fetches data from the sqlite db according to request
-    async fn handle_query(&self, _query: web::Query) -> Result<axum::Json<web::Metrics>> {
+    async fn handle_query(&self, _query: web::MetricsQuery) -> Result<axum::Json<web::Metrics>> {
         let metrics = self
             .with_conn(move |conn| {
                 let mut metrics = Metrics::default();
@@ -152,7 +152,7 @@ impl Checker {
                         .context("could not convert epoch to timestamp")?;
                     series.values.push(web::TimeValue {
                         ts,
-                        latency_ms: Some(row.ms),
+                        ms: Some(row.ms),
                         err: None,
                     });
                     //

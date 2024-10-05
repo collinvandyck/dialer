@@ -44,6 +44,22 @@ impl Db {
     pub fn conn(&self) -> Result<PooledConnection<SqliteConnectionManager>> {
         Ok(self.pool.get()?)
     }
+
+    pub async fn with_conn<F, R>(&self, f: F) -> anyhow::Result<R>
+    where
+        F: Fn(PooledConnection<SqliteConnectionManager>) -> anyhow::Result<R>,
+        F: Send + Sync + 'static,
+        R: Send + Sync + 'static,
+    {
+        let db = self.clone();
+        let res = tokio::task::spawn_blocking(move || {
+            let conn = db.conn().context("get conn")?;
+            f(conn)
+        })
+        .await
+        .context("blocking thread panicked")?;
+        res
+    }
 }
 
 mod migrate {
