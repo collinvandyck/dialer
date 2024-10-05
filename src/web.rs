@@ -95,6 +95,16 @@ struct Rollup {
     errs: usize,
 }
 
+trait DateTimeExt {
+    fn epoch_secs(&self) -> Result<u64>;
+}
+
+impl DateTimeExt for DateTime<Utc> {
+    fn epoch_secs(&self) -> Result<u64> {
+        Ok((*self - DateTime::UNIX_EPOCH).to_std()?.as_secs())
+    }
+}
+
 #[instrument(skip_all)]
 async fn handle_metrics(
     State(Server { config, db }): State<Server>,
@@ -113,7 +123,7 @@ async fn handle_metrics(
         return Err(ServerError::InvalidEndDate);
     }
     let window = (end - start).to_std()?;
-    let resolution_secs = 10;
+    let resolution_secs = 5;
     let metrics = db
         .with_conn(move |conn| {
             let mut metrics = Metrics::default();
@@ -138,8 +148,8 @@ async fn handle_metrics(
                     ORDER BY bucket, name, kind
                     ",
             )?;
-            let start = (start - DateTime::UNIX_EPOCH).to_std()?.as_secs();
-            let end = (end - DateTime::UNIX_EPOCH).to_std()?.as_secs();
+            let start = start.epoch_secs()?;
+            let end = end.epoch_secs()?;
             let params = named_params! {
                 ":rollup": resolution_secs,
                 ":start_time": start,
