@@ -96,14 +96,13 @@ impl Checker {
                 .redirect(reqwest::redirect::Policy::none())
                 .timeout(timeout)
                 .build()
-                .context("could not build http client")?;
+                .context("build http client")?;
             let req = client
                 .request(Method::GET, http.url.as_ref())
                 .build()
-                .context("could not build http req")?;
+                .context("build http req")?;
             let start = Instant::now();
-            let resp: reqwest::Response =
-                client.execute(req).await.context("http request failed")?;
+            let resp: reqwest::Response = client.execute(req).await.context("request")?;
             anyhow::Ok((resp, start.elapsed()))
         })
         .await;
@@ -112,7 +111,7 @@ impl Checker {
                 self.mark_ok(http.id, latency).await?;
             }
             Ok(Err(err)) => {
-                tracing::error!("http: {err}");
+                tracing::error!("http: {err:?}");
                 self.mark_err(http.id, format!("{err:?}")).await?;
             }
             Err(elapsed) => {
@@ -150,7 +149,7 @@ impl Checker {
                 self.mark_ok(ping.id, latency).await?;
             }
             Ok(Err(err)) => {
-                tracing::error!("ping: {err}");
+                tracing::error!("ping: {err:?}");
                 self.mark_err(ping.id, format!("{err:?}")).await?;
             }
             Err(elapsed) => {
