@@ -13,7 +13,7 @@ need_stdout = true
 allow_warnings = true
 background = false
 on_change_strategy = "kill_then_restart"
-watch = [ "scripts", "templates" ]
+watch = [ "scripts", "templates", "checks.toml" ]
 
 [jobs.rollup]
 command = [ "scripts/rollup.sh" ]

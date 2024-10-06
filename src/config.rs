@@ -80,6 +80,7 @@ mod tests {
         );
         let config = r#"
             db_path = "checks.db"
+            live_reload = false
             interval = "1s"
             listen = ":3000"
 
@@ -98,6 +99,7 @@ mod tests {
             config,
             Config {
                 db_path: PathBuf::from("checks.db"),
+                live_reload: false,
                 interval: Duration::from_secs(1),
                 listen: String::from(":3000"),
                 ping: HashMap::from([

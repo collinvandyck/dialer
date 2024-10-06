@@ -10,6 +10,7 @@ use reqwest::StatusCode;
 use rusqlite::named_params;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
+use tokio::net::TcpListener;
 use tower::ServiceBuilder;
 use tower_http::{compression::CompressionLayer, services::ServeDir};
 use tower_livereload::LiveReloadLayer;
@@ -32,20 +33,22 @@ impl Server {
 
     #[instrument(skip_all)]
     pub async fn run(&self) -> Result<()> {
-        info!("Starting http listener on {}", self.config.listen);
-        let router = axum::Router::new()
+        let mut rtr = axum::Router::new()
             .route("/query", routing::get(handle_metrics))
             .route("/old", routing::get(handle_old_index))
             .route("/", routing::get(handle_index))
             .fallback_service(ServeDir::new("html"))
-            .layer(LiveReloadLayer::new())
-            .layer(ServiceBuilder::new().layer(CompressionLayer::new()))
             .with_state(self.clone());
-        let listener = tokio::net::TcpListener::bind(&self.config.listen)
+        if self.config.live_reload {
+            info!("Live reload enabled");
+            rtr = rtr.layer(LiveReloadLayer::new());
+        }
+        rtr = rtr.layer(ServiceBuilder::new().layer(CompressionLayer::new()));
+        let listener = TcpListener::bind(&self.config.listen)
             .await
-            .context("could not bind http listener")?;
+            .context(format!("bind to {}", self.config.listen))?;
         info!("Bound http listener to {}", self.config.listen);
-        axum::serve(listener, router).await.context("axum failed")?;
+        axum::serve(listener, rtr).await.context("axum failed")?;
         bail!("axum quit unexpectedly");
     }
 }
