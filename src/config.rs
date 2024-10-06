@@ -1,21 +1,35 @@
+use anyhow::Context;
+use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,
     path::{Path, PathBuf},
     time::Duration,
 };
 
-use anyhow::Context;
-use serde::{Deserialize, Serialize};
-
-#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(default)]
 pub struct Config {
     pub db_path: PathBuf,
+    pub live_reload: bool,
     #[serde(with = "humantime_serde")]
     pub interval: Duration,
     #[serde(default = "default_listen")]
     pub listen: String,
     pub ping: HashMap<String, Ping>,
     pub http: HashMap<String, Http>,
+}
+
+impl Default for Config {
+    fn default() -> Self {
+        Self {
+            db_path: PathBuf::default(),
+            live_reload: cfg!(debug_assertions),
+            interval: Duration::default(),
+            listen: String::default(),
+            ping: HashMap::default(),
+            http: HashMap::default(),
+        }
+    }
 }
 
 fn default_listen() -> String {
@@ -106,7 +120,8 @@ mod tests {
                         url: String::from("https://google.com"),
                         code: None
                     }
-                )])
+                )]),
+                ..Default::default()
             }
         );
     }
@@ -128,6 +143,7 @@ mod tests {
         assert_eq!(
             config,
             Config {
+                live_reload: true,
                 db_path: PathBuf::from("checks.db"),
                 interval: Duration::from_secs(1),
                 listen: default_listen(),
