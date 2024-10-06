@@ -10,7 +10,9 @@ use reqwest::StatusCode;
 use rusqlite::named_params;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
+use tower::ServiceBuilder;
 use tower_http::{compression::CompressionLayer, services::ServeDir};
+use tower_livereload::LiveReloadLayer;
 use tracing::{info, instrument};
 
 /// handles web serving and api requests
@@ -35,8 +37,9 @@ impl Server {
             .route("/query", routing::get(handle_metrics))
             .route("/old", routing::get(handle_old_index))
             .route("/", routing::get(handle_index))
-            .layer(tower::ServiceBuilder::new().layer(CompressionLayer::new()))
             .fallback_service(ServeDir::new("html"))
+            .layer(LiveReloadLayer::new())
+            .layer(ServiceBuilder::new().layer(CompressionLayer::new()))
             .with_state(self.clone());
         let listener = tokio::net::TcpListener::bind(&self.config.listen)
             .await
