@@ -31,7 +31,8 @@ tokio = { version = "1.40.0", features = ["full"] }
 tokio-ping = "0.3.0"
 tokio-stream = "0.1.16"
 toml = "0.8.19"
-tower-http = { version = "0.6.1", features = ["fs"] }
+tower = "0.5.1"
+tower-http = { version = "0.6.1", features = ["fs", "compression-gzip"] }
 tracing = "0.1.40"
 tracing-error = "0.2.0"
 tracing-subscriber = { version = "0.3.18", features = ["env-filter"] }
