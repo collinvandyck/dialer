@@ -4,6 +4,7 @@ db_path = "checks.db"
 [ping]
 google = { host = "google.com" }
 yahoo = { host = "yahoo.com" }
+gateway = { host = "192.168.0.1" }
 
 [http.google]
 url = "https://www.google.com/"
@@ -11,3 +12,4 @@ code = 200
 
 [http]
 yahoo = { url = "https://www.yahoo.com/" }
+gateway = { url = "http://192.168.0.1/" }
