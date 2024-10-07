@@ -1,0 +1,14 @@
+interval = "1s"
+db_path = "/var/lib/dialer/checks.db"
+
+[ping]
+google = { host = "google.com" }
+yahoo = { host = "yahoo.com" }
+
+[http.google]
+url = "https://www.google.com/"
+code = 200
+
+[http]
+yahoo = { url = "https://www.yahoo.com/" }
+

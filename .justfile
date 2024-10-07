@@ -16,6 +16,9 @@ watch:
         --restart \
         just clean dev
 
+image:
+    docker build -t dialer .
+
 tail_http:
     #!/usr/bin/env bash
     watch --interval 0.5 "sqlite3 checks.db 'SELECT *
