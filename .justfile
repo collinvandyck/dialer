@@ -16,8 +16,11 @@ watch:
         --restart \
         just clean dev
 
-image:
+image-old:
     docker build -t dialer .
+
+image:
+    docker --debug build -f Dockerfile.ubuntu -t dialer .
 
 tail_http:
     #!/usr/bin/env bash

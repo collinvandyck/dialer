@@ -141,6 +141,7 @@ impl Checker {
                     }
                 }
             };
+            // info!("surge ping addr={addr} data={data:?}");
             surge_ping::ping(addr, &data).await.context("ping failed")
         })
         .await;

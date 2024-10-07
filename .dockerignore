@@ -1,2 +1,4 @@
 /target
 Dockerfile
+Dockerfile.ubuntu
+checks.db*
